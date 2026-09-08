@@ -1,0 +1,249 @@
+namespace RetailRescueAI.Backend.DTOs;
+
+// Auth
+public record LoginRequest(string Username, string Password);
+public record LoginResponse(bool Success, string Message, string Token, UserDto? User);
+public record UserDto(int Id, string Username, string FullName, string Role, int? StoreId, string? StoreName);
+
+// POS
+public record PosProductDto(
+    int Id,
+    string ProductCode,
+    string Name,
+    string Description,
+    string CategoryName,
+    decimal Price,
+    string Barcode,
+    string ImageUrl,
+    int TotalAvailableStock,
+    string EarliestExpiryFormatted
+);
+
+public record PosRecommendationRequest(
+    List<int> ProductIdsInCart,
+    decimal CurrentSubtotal,
+    int? CustomerId
+);
+
+public record PosRecommendationItemDto(
+    int PromotionId,
+    string PromotionCode,
+    string PromotionName,
+    string PromotionType,
+    int TargetProductId,
+    string TargetProductName,
+    decimal OriginalPrice,
+    decimal DiscountPercent,
+    decimal FinalPrice,
+    string Message,
+    string ActionPrompt // e.g. "チキン弁当をお買い上げでサラダが20%OFF！"
+);
+
+public record PosRecommendationResponse(
+    List<PosRecommendationItemDto> Recommendations
+);
+
+public record CheckoutItemRequest(
+    int ProductId,
+    int Quantity,
+    int? AppliedPromotionId
+);
+
+public record CheckoutRequest(
+    int? CustomerId,
+    string PaymentMethod,
+    List<CheckoutItemRequest> Items,
+    decimal ReceivedAmount
+);
+
+public record CheckoutResponse(
+    bool Success,
+    string Message,
+    string TransactionNumber,
+    decimal Subtotal,
+    decimal DiscountAmount,
+    decimal TotalAmount,
+    decimal ChangeAmount,
+    DateTime CreatedAt,
+    List<ReceiptItemDto> Items
+);
+
+public record ReceiptItemDto(
+    string ProductName,
+    int Quantity,
+    decimal UnitPrice,
+    decimal DiscountAmount,
+    decimal FinalPrice
+);
+
+// Inventory & Expiry
+public record InventoryBatchDto(
+    int Id,
+    string BatchCode,
+    int ProductId,
+    string ProductName,
+    string ProductCode,
+    string CategoryName,
+    decimal Price,
+    int InitialQuantity,
+    int RemainingQuantity,
+    DateTime ProductionDate,
+    DateTime ExpiryDate,
+    double HoursUntilExpiry,
+    string Status,
+    string StatusJapanese
+);
+
+public record ExpiryRiskDto(
+    int BatchId,
+    string BatchCode,
+    int ProductId,
+    string ProductName,
+    string Barcode,
+    int RemainingQuantity,
+    double HoursUntilExpiry,
+    decimal AverageDailySales,
+    int EstimatedNormalSalesUntilExpiry,
+    int PotentialWasteUnits,
+    decimal PotentialWasteCost,
+    string RiskLevel,
+    string RiskJapanese
+);
+
+// AI Recommendations
+public record AIRecommendationDto(
+    int Id,
+    string RecommendationCode,
+    int TargetProductId,
+    string TargetProductName,
+    int TargetBatchId,
+    string TargetBatchCode,
+    string RecommendationType,
+    string RiskLevel,
+    string RecommendedAction,
+    decimal? RecommendedDiscountPercent,
+    decimal? RecommendedComboPrice,
+    DateTime StartTime,
+    DateTime EndTime,
+    int ExpectedSales,
+    int ExpectedWasteReduction,
+    decimal ExpectedRevenue,
+    string Reason,
+    string Status,
+    DateTime CreatedAt,
+    List<AIEvidenceDto> Evidences
+);
+
+public record AIEvidenceDto(
+    string Key,
+    string Value,
+    string Description
+);
+
+public record ApproveRecommendationRequest(
+    string? Notes
+);
+
+public record RejectRecommendationRequest(
+    string Reason
+);
+
+// Promotions
+public record PromotionDto(
+    int Id,
+    string PromotionCode,
+    string Name,
+    string PromotionType,
+    string Status,
+    int? TargetProductId,
+    string? TargetProductName,
+    string? TargetBatchCode,
+    decimal? DiscountPercent,
+    decimal? ComboPrice,
+    DateTime StartTime,
+    DateTime EndTime,
+    string CreatedVia,
+    string CreatedBy,
+    string? ApprovedBy,
+    DateTime? ApprovedAt,
+    string? AiReasoning,
+    DateTime CreatedAt
+);
+
+public record CreatePromotionRequest(
+    string Name,
+    string PromotionType,
+    int TargetProductId,
+    int? TargetBatchId,
+    decimal? DiscountPercent,
+    decimal? ComboPrice,
+    DateTime StartTime,
+    DateTime EndTime,
+    string? Reasoning
+);
+
+// Chatbot
+public record ChatMessageDto(
+    string Role, // user, assistant, system
+    string Content,
+    DateTime Timestamp
+);
+
+public record ChatRequest(
+    string Message,
+    List<ChatMessageDto>? History
+);
+
+public record ChatResponse(
+    string Reply,
+    bool HasPromotionProposal,
+    PromotionProposalDto? ProposedPromotion
+);
+
+public record PromotionProposalDto(
+    string Name,
+    string PromotionType,
+    int TargetProductId,
+    string TargetProductName,
+    int? TargetBatchId,
+    string? TargetBatchCode,
+    decimal DiscountPercent,
+    decimal? OriginalPrice,
+    decimal? DiscountedPrice,
+    DateTime StartTime,
+    DateTime EndTime,
+    string Reasoning
+);
+
+// Dashboard & Results
+public record DashboardStatsDto(
+    int AtRiskProductsCount,
+    int CriticalProductsCount,
+    decimal PotentialWasteCost,
+    int PendingAiRecommendationsCount,
+    int ActivePromotionsCount,
+    decimal WasteReductionRate,
+    decimal RecoveredRevenueTotal,
+    int TotalItemsSaved
+);
+
+public record PromotionResultDto(
+    int Id,
+    int PromotionId,
+    string PromotionCode,
+    string PromotionName,
+    string ProductName,
+    string BatchCode,
+    int InitialStock,
+    int StockBeforePromotion,
+    int UnitsSold,
+    int UnitsRemaining,
+    int ExpiredUnits,
+    int ExpectedSales,
+    int ActualSales,
+    int ActualWasteAvoided,
+    decimal WasteReductionRate,
+    decimal ActualRevenue,
+    DateTime EvaluatedAt
+);
+
