@@ -120,10 +120,12 @@ public class PromotionService : IPromotionService
                 promotionName = promo.Name,
                 targetProductId = promo.TargetProductId,
                 targetProductName = promo.TargetProduct?.Name,
+                targetBatchId = promo.TargetBatchId,
+                targetBatchCode = promo.TargetBatch?.BatchCode,
                 discountPercent = promo.DiscountPercent,
                 startTime = promo.StartTime,
                 endTime = promo.EndTime,
-                message = $"【新着特売適用】「{promo.Name}」が店長により承認されました！"
+                message = $"【値引き承認】「{promo.Name}」が店長により承認されました！"
             }, cancellationToken);
         }
         catch (Exception ex)

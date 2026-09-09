@@ -117,10 +117,12 @@ public class AiRecommendationService : IAiRecommendationService
                 promotionName = promo.Name,
                 targetProductId = promo.TargetProductId,
                 targetProductName = rec.TargetProduct?.Name,
+                targetBatchId = promo.TargetBatchId,
+                targetBatchCode = rec.TargetBatch?.BatchCode,
                 discountPercent = promo.DiscountPercent,
                 startTime = promo.StartTime,
                 endTime = promo.EndTime,
-                message = $"【新着特売適用】{rec.TargetProduct?.Name} が {promo.DiscountPercent:F0}% OFF に承認されました！"
+                message = $"【値引き承認】{rec.TargetProduct?.Name} (ロット: {rec.TargetBatch?.BatchCode ?? promo.TargetBatchId.ToString()}) が {promo.DiscountPercent:F0}% OFF に承認されました！"
             }, cancellationToken);
         }
         catch (Exception ex)

@@ -1,6 +1,23 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5205/api';
 export const SIGNALR_HUB_URL = process.env.NEXT_PUBLIC_SIGNALR_URL || 'http://localhost:5205/hubs/promotions';
 
+export interface PosBatchSummary {
+  id: number;
+  batchCode: string;
+  productId: number;
+  remainingQuantity: number;
+  productionDate: string;
+  expiryDate: string;
+  hoursUntilExpiry: number;
+  expiryFormatted: string;
+  isExpired: boolean;
+  isDiscounted: boolean;
+  discountPercent?: number;
+  finalPrice?: number;
+  promotionId?: number;
+  promotionName?: string;
+}
+
 export interface PosProduct {
   id: number;
   productCode: string;
@@ -12,6 +29,7 @@ export interface PosProduct {
   imageUrl: string;
   totalAvailableStock: number;
   earliestExpiryFormatted: string;
+  batches?: PosBatchSummary[];
 }
 
 export interface PosRecommendationItem {
@@ -21,6 +39,9 @@ export interface PosRecommendationItem {
   promotionType: string;
   targetProductId: number;
   targetProductName: string;
+  targetBatchId?: number;
+  targetBatchCode?: string;
+  expiryDate?: string;
   originalPrice: number;
   discountPercent: number;
   finalPrice: number;
@@ -258,11 +279,16 @@ export async function fetchCustomers(): Promise<Customer[]> {
   return res.json();
 }
 
-export async function fetchPosRecommendations(productIdsInCart: number[], currentSubtotal: number, customerId?: number): Promise<PosRecommendationItem[]> {
+export async function fetchPosRecommendations(
+  productIdsInCart: number[],
+  batchIdsInCart: number[],
+  currentSubtotal: number,
+  customerId?: number
+): Promise<PosRecommendationItem[]> {
   const res = await fetch(`${API_BASE_URL}/pos/recommendations`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ productIdsInCart, currentSubtotal, customerId })
+    body: JSON.stringify({ productIdsInCart, batchIdsInCart, currentSubtotal, customerId })
   });
   if (!res.ok) throw new Error('レジ推奨プロモーションの取得に失敗しました。');
   const data = await res.json();
@@ -272,7 +298,7 @@ export async function fetchPosRecommendations(productIdsInCart: number[], curren
 export async function processPosCheckout(payload: {
   customerId?: number;
   paymentMethod: string;
-  items: { productId: number; quantity: number; appliedPromotionId?: number }[];
+  items: { productId: number; batchId: number; quantity: number; appliedPromotionId?: number }[];
   receivedAmount: number;
 }): Promise<any> {
   const res = await fetch(`${API_BASE_URL}/pos/checkout`, {
@@ -280,8 +306,11 @@ export async function processPosCheckout(payload: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
-  if (!res.ok) throw new Error('チェックアウト処理に失敗しました。');
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.message || 'チェックアウト処理に失敗しました。');
+  }
+  return data;
 }
 
 export async function sendChatMessage(message: string, history: any[]): Promise<any> {

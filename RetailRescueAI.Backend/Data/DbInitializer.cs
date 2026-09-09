@@ -191,7 +191,7 @@ public static class DbInitializer
             CreatedAt = now.AddHours(-10)
         };
 
-        // Egg Sandwich: Batch 1 (Critical: 12 units, expires in 8 hours)
+        // Egg Sandwich: Batch 1 (Critical: 12 units, expires in 6 hours), Batch 2 (Fresh: 20 units, expires in 28 hours), Batch Expired (Expired 2 hours ago)
         var bSand1 = new InventoryBatch
         {
             BatchCode = "BATCH-SAND-001",
@@ -199,10 +199,36 @@ public static class DbInitializer
             StoreId = store.Id,
             InitialQuantity = 20,
             RemainingQuantity = 12,
-            ProductionDate = now.AddHours(-16),
-            ExpiryDate = now.AddHours(8),
+            ProductionDate = now.AddHours(-18),
+            ExpiryDate = now.AddHours(6),
             Status = "CRITICAL",
-            CreatedAt = now.AddHours(-16)
+            CreatedAt = now.AddHours(-18)
+        };
+
+        var bSand2 = new InventoryBatch
+        {
+            BatchCode = "BATCH-SAND-002",
+            ProductId = pSand1.Id,
+            StoreId = store.Id,
+            InitialQuantity = 30,
+            RemainingQuantity = 20,
+            ProductionDate = now.AddHours(-2),
+            ExpiryDate = now.AddHours(28),
+            Status = "AVAILABLE",
+            CreatedAt = now.AddHours(-2)
+        };
+
+        var bSandExpired = new InventoryBatch
+        {
+            BatchCode = "BATCH-SAND-EXPIRED",
+            ProductId = pSand1.Id,
+            StoreId = store.Id,
+            InitialQuantity = 10,
+            RemainingQuantity = 5,
+            ProductionDate = now.AddHours(-30),
+            ExpiryDate = now.AddHours(-2), // 2 hours expired!
+            Status = "EXPIRED",
+            CreatedAt = now.AddHours(-30)
         };
 
         // Green Tea: Batch 1 (Available: 60 units, expires in 30 days)
@@ -233,7 +259,7 @@ public static class DbInitializer
             CreatedAt = now.AddHours(-10)
         };
 
-        context.InventoryBatches.AddRange(bBento1, bBento2, bSalad1, bSand1, bDrink1, bBento3);
+        context.InventoryBatches.AddRange(bBento1, bBento2, bSalad1, bSand1, bSand2, bSandExpired, bDrink1, bBento3);
         await context.SaveChangesAsync();
 
         // 6. Customers
@@ -340,6 +366,7 @@ public static class DbInitializer
             PromotionType = "DIRECT_DISCOUNT",
             Status = "APPROVED",
             TargetProductId = pBento1.Id,
+            TargetBatchId = bBento1.Id,
             DiscountPercent = 20.00m,
             StartTime = now.AddDays(-3).Date.AddHours(17),
             EndTime = now.AddDays(-3).Date.AddHours(22),
@@ -373,6 +400,48 @@ public static class DbInitializer
             EvaluatedAt = now.AddDays(-2)
         };
         context.PromotionResults.Add(prevResult);
+
+        // 9. Active Approved Promotions for Live Demo (Rules 3, 6, 8, 10)
+        var activeSandPromo = new Promotion
+        {
+            PromotionCode = "PROMO-SAND-40",
+            Name = "【値引きシール】こだわりたまごサンド 40%OFF",
+            PromotionType = "DIRECT_DISCOUNT",
+            Status = "APPROVED",
+            TargetProductId = pSand1.Id,
+            TargetBatchId = bSand1.Id,
+            DiscountPercent = 40.00m,
+            StartTime = now.AddHours(-2),
+            EndTime = now.AddHours(12),
+            CreatedVia = "AI_AGENT",
+            CreatedBy = "OrchestratorAgent",
+            ApprovedBy = "佐藤 店長",
+            ApprovedAt = now.AddHours(-1),
+            AiReasoning = "賞味期限6時間前のロットBATCH-SAND-001の廃棄防止のため40%値引きシールを適用",
+            CreatedAt = now.AddHours(-2)
+        };
+        context.Promotions.Add(activeSandPromo);
+
+        var activeBentoPromo = new Promotion
+        {
+            PromotionCode = "PROMO-BENTO-20",
+            Name = "【値引きシール】チキン南蛮弁当 20%OFF",
+            PromotionType = "DIRECT_DISCOUNT",
+            Status = "APPROVED",
+            TargetProductId = pBento1.Id,
+            TargetBatchId = bBento1.Id,
+            DiscountPercent = 20.00m,
+            StartTime = now.AddHours(-1),
+            EndTime = now.AddHours(8),
+            CreatedVia = "AI_AGENT",
+            CreatedBy = "OrchestratorAgent",
+            ApprovedBy = "佐藤 店長",
+            ApprovedAt = now.AddHours(-1),
+            AiReasoning = "夕方ピーク前の賞味期限間近ロットBATCH-BENTO-001を20%割引で売り切り促進",
+            CreatedAt = now.AddHours(-1)
+        };
+        context.Promotions.Add(activeBentoPromo);
+
         await context.SaveChangesAsync();
     }
 }

@@ -6,6 +6,23 @@ public record LoginResponse(bool Success, string Message, string Token, UserDto?
 public record UserDto(int Id, string Username, string FullName, string Role, int? StoreId, string? StoreName);
 
 // POS
+public record PosBatchSummaryDto(
+    int Id,
+    string BatchCode,
+    int ProductId,
+    int RemainingQuantity,
+    DateTime ProductionDate,
+    DateTime ExpiryDate,
+    double HoursUntilExpiry,
+    string ExpiryFormatted,
+    bool IsExpired,
+    bool IsDiscounted,
+    decimal? DiscountPercent,
+    decimal? FinalPrice,
+    int? PromotionId,
+    string? PromotionName
+);
+
 public record PosProductDto(
     int Id,
     string ProductCode,
@@ -16,11 +33,13 @@ public record PosProductDto(
     string Barcode,
     string ImageUrl,
     int TotalAvailableStock,
-    string EarliestExpiryFormatted
+    string EarliestExpiryFormatted,
+    List<PosBatchSummaryDto> Batches
 );
 
 public record PosRecommendationRequest(
     List<int> ProductIdsInCart,
+    List<int>? BatchIdsInCart,
     decimal CurrentSubtotal,
     int? CustomerId
 );
@@ -32,6 +51,9 @@ public record PosRecommendationItemDto(
     string PromotionType,
     int TargetProductId,
     string TargetProductName,
+    int? TargetBatchId,
+    string? TargetBatchCode,
+    DateTime? ExpiryDate,
     decimal OriginalPrice,
     decimal DiscountPercent,
     decimal FinalPrice,
@@ -45,6 +67,7 @@ public record PosRecommendationResponse(
 
 public record CheckoutItemRequest(
     int ProductId,
+    int BatchId,
     int Quantity,
     int? AppliedPromotionId
 );
@@ -70,6 +93,7 @@ public record CheckoutResponse(
 
 public record ReceiptItemDto(
     string ProductName,
+    string BatchCode,
     int Quantity,
     decimal UnitPrice,
     decimal DiscountAmount,

@@ -5,6 +5,7 @@ import Navbar from '@/components/Navbar';
 import * as signalR from '@microsoft/signalr';
 import {
   PosProduct,
+  PosBatchSummary,
   PosRecommendationItem,
   Customer,
   SIGNALR_HUB_URL,
@@ -35,6 +36,7 @@ import {
 
 interface CartItem {
   product: PosProduct;
+  batch: PosBatchSummary;
   quantity: number;
   appliedPromotion?: PosRecommendationItem;
 }
@@ -109,19 +111,22 @@ export default function PosPage() {
       promotionName: string;
       targetProductId?: number;
       targetProductName?: string;
+      targetBatchId?: number;
+      targetBatchCode?: string;
       discountPercent?: number;
       message: string;
     }) => {
       console.log('[SignalR] Received PromotionApproved event:', data);
       const discountRate = data.discountPercent ?? 20;
       const prodName = data.targetProductName || '対象商品';
+      const batchCodeStr = data.targetBatchCode ? ` [ロット: ${data.targetBatchCode}]` : '';
 
       // 1. Show dynamic notification banner
       setRealtimeNotification({
         id: data.promotionId,
-        message: data.message || `【新着特売】${prodName} が ${discountRate}% OFF に承認されました！`,
+        message: data.message || `【新着値引き】${prodName}${batchCodeStr} が ${discountRate}% OFF に承認されました！`,
         discountPercent: discountRate,
-        productName: prodName,
+        productName: `${prodName}${batchCodeStr}`,
       });
 
       // Dismiss notification banner automatically after 9 seconds
@@ -129,27 +134,29 @@ export default function PosPage() {
         setRealtimeNotification((curr) => (curr?.id === data.promotionId ? null : curr));
       }, 9000);
 
-      // 2. If targetProductId is present, auto-apply to cart if it's in cart!
-      if (data.targetProductId) {
-        const targetId = data.targetProductId;
+      // 2. RULES 3 & 4: ONLY apply to cart items matching targetBatchId!
+      if (data.targetBatchId) {
+        const targetBatchId = data.targetBatchId;
 
         setCart((prevCart) => {
-          const itemExists = prevCart.some((i) => i.product.id === targetId);
-          if (!itemExists) return prevCart;
+          const matchingItem = prevCart.find((i) => i.batch.id === targetBatchId);
+          if (!matchingItem) return prevCart;
 
           // Highlight matching item in cart
-          setHighlightedProductId(targetId);
+          setHighlightedProductId(matchingItem.product.id);
           setTimeout(() => setHighlightedProductId(null), 3500);
 
           return prevCart.map((item) => {
-            if (item.product.id === targetId) {
+            if (item.batch.id === targetBatchId) {
               const promoItem: PosRecommendationItem = {
                 promotionId: data.promotionId,
                 promotionCode: data.promotionCode,
                 promotionName: data.promotionName,
-                promotionType: 'PRICE_DISCOUNT',
-                targetProductId: targetId,
+                promotionType: 'DIRECT_DISCOUNT',
+                targetProductId: item.product.id,
                 targetProductName: prodName,
+                targetBatchId: targetBatchId,
+                targetBatchCode: data.targetBatchCode || item.batch.batchCode,
                 originalPrice: item.product.price,
                 discountPercent: discountRate,
                 finalPrice: Math.round(item.product.price * (1 - discountRate / 100)),
@@ -161,34 +168,14 @@ export default function PosPage() {
                 appliedPromotion: promoItem,
               };
             }
+            // Other batches of the same product maintain their own prices! (Rule 4)
             return item;
           });
         });
-
-        // Also add or update the recommendation in POS recommendations panel
-        setRecommendations((prevRecs) => {
-          const newPromo: PosRecommendationItem = {
-            promotionId: data.promotionId,
-            promotionCode: data.promotionCode,
-            promotionName: data.promotionName,
-            promotionType: 'PRICE_DISCOUNT',
-            targetProductId: targetId,
-            targetProductName: prodName,
-            originalPrice: 0,
-            discountPercent: discountRate,
-            finalPrice: 0,
-            message: data.message,
-            actionPrompt: '店長承認により有効化',
-          };
-          const exists = prevRecs.some((r) => r.promotionId === data.promotionId || r.targetProductId === targetId);
-          if (exists) {
-            return prevRecs.map((r) =>
-              r.promotionId === data.promotionId || r.targetProductId === targetId ? newPromo : r
-            );
-          }
-          return [newPromo, ...prevRecs];
-        });
       }
+
+      // Refresh product list to sync batch discount flags
+      fetchProducts().then(setProducts).catch(console.error);
     });
 
     return () => {
@@ -233,6 +220,7 @@ export default function PosPage() {
   // Whenever cart changes, fetch ultra-fast recommendations (<500ms)
   useEffect(() => {
     const productIds = cart.map((i) => i.product.id);
+    const batchIds = cart.map((i) => i.batch.id);
     const subtotal = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
 
     if (productIds.length === 0) {
@@ -240,41 +228,85 @@ export default function PosPage() {
       return;
     }
 
-    fetchPosRecommendations(productIds, subtotal, selectedCustomerId)
+    fetchPosRecommendations(productIds, batchIds, subtotal, selectedCustomerId)
       .then((recs) => {
         setRecommendations(recs);
-        // Automatically link promotions to cart items if matched
-        setCart((prev) =>
-          prev.map((item) => {
-            const matchedPromo = recs.find((r) => r.targetProductId === item.product.id);
-            return {
-              ...item,
-              appliedPromotion: matchedPromo || item.appliedPromotion,
-            };
-          })
-        );
       })
       .catch((err) => console.error('Failed to load POS recommendations', err));
-  }, [cart.map((i) => `${i.product.id}-${i.quantity}`).join(','), selectedCustomerId]);
+  }, [cart.map((i) => `${i.product.id}-${i.batch.id}-${i.quantity}`).join(','), selectedCustomerId]);
 
-  function addToCart(product: PosProduct) {
+  function addToCart(product: PosProduct, specificBatch?: PosBatchSummary) {
+    const validBatches = (product.batches || []).filter((b) => !b.isExpired && b.remainingQuantity > 0);
+
+    if (validBatches.length === 0 && !specificBatch) {
+      alert(`「${product.name}」は有効な在庫がありません（完売または賞味期限切れ）。`);
+      return;
+    }
+
+    const targetBatch = specificBatch || validBatches[0];
+    if (!targetBatch) {
+      alert(`「${product.name}」の選択可能なロットがありません。`);
+      return;
+    }
+
+    // RULE 7: Expired items CANNOT be sold! (賞味期限切れ販売禁止)
+    if (targetBatch.isExpired) {
+      alert(`⛔ 【販売不可】ロット「${targetBatch.batchCode}」は賞味期限が切れています！\n店頭から直ちに撤去してください（Rule 7: 期限切れ販売禁止）。`);
+      return;
+    }
+
+    if (targetBatch.remainingQuantity <= 0) {
+      alert(`ロット「${targetBatch.batchCode}」は在庫切れです。`);
+      return;
+    }
+
     setCart((prev) => {
-      const existing = prev.find((i) => i.product.id === product.id);
+      const existing = prev.find((i) => i.product.id === product.id && i.batch.id === targetBatch.id);
       if (existing) {
+        if (existing.quantity >= targetBatch.remainingQuantity) {
+          alert(`ロット「${targetBatch.batchCode}」の在庫上限 (${targetBatch.remainingQuantity}個) を超えて追加することはできません。`);
+          return prev;
+        }
         return prev.map((i) =>
-          i.product.id === product.id ? { ...i, quantity: i.quantity + 1 } : i
+          i.product.id === product.id && i.batch.id === targetBatch.id ? { ...i, quantity: i.quantity + 1 } : i
         );
       }
-      return [...prev, { product, quantity: 1 }];
+
+      // If batch has an approved promotion, link it! (Rules 3, 6, 8)
+      let defaultPromo: PosRecommendationItem | undefined = undefined;
+      if (targetBatch.isDiscounted && targetBatch.promotionId && targetBatch.discountPercent) {
+        defaultPromo = {
+          promotionId: targetBatch.promotionId,
+          promotionCode: `PROMO-BATCH-${targetBatch.id}`,
+          promotionName: targetBatch.promotionName || `${targetBatch.discountPercent}% OFF`,
+          promotionType: 'DIRECT_DISCOUNT',
+          targetProductId: product.id,
+          targetProductName: product.name,
+          targetBatchId: targetBatch.id,
+          targetBatchCode: targetBatch.batchCode,
+          expiryDate: targetBatch.expiryDate,
+          originalPrice: product.price,
+          discountPercent: targetBatch.discountPercent,
+          finalPrice: targetBatch.finalPrice || Math.round(product.price * (1 - targetBatch.discountPercent / 100)),
+          message: `【値引き適用】${targetBatch.batchCode} が ${targetBatch.discountPercent}% OFF`,
+          actionPrompt: '店長承認済み値引きシール貼付ロット',
+        };
+      }
+
+      return [...prev, { product, batch: targetBatch, quantity: 1, appliedPromotion: defaultPromo }];
     });
   }
 
-  function updateQuantity(productId: number, delta: number) {
+  function updateQuantity(productId: number, batchId: number, delta: number) {
     setCart((prev) =>
       prev
         .map((item) => {
-          if (item.product.id === productId) {
+          if (item.product.id === productId && item.batch.id === batchId) {
             const newQty = item.quantity + delta;
+            if (delta > 0 && newQty > item.batch.remainingQuantity) {
+              alert(`ロット「${item.batch.batchCode}」の在庫上限 (${item.batch.remainingQuantity}個) に達しています。`);
+              return item;
+            }
             return newQty > 0 ? { ...item, quantity: newQty } : null;
           }
           return item;
@@ -283,8 +315,8 @@ export default function PosPage() {
     );
   }
 
-  function removeFromCart(productId: number) {
-    setCart((prev) => prev.filter((i) => i.product.id !== productId));
+  function removeFromCart(productId: number, batchId: number) {
+    setCart((prev) => prev.filter((i) => !(i.product.id === productId && i.batch.id === batchId)));
   }
 
   function clearCart() {
@@ -293,29 +325,63 @@ export default function PosPage() {
   }
 
   // Quick Barcode Scan simulation
-  function scanBarcode(barcode: string) {
-    const found = products.find((p) => p.barcode === barcode);
+  function scanBarcode(code: string) {
+    // 1. Discount Stickers & Special Batch Scans
+    if (code === 'STICKER-SAND-001') {
+      const p = products.find((prod) => prod.productCode === 'SAND-001');
+      const b = p?.batches?.find((batch) => batch.batchCode === 'BATCH-SAND-001');
+      if (p && b) {
+        addToCart(p, b);
+        return;
+      }
+    }
+    if (code === 'EXPIRED-SAND') {
+      const p = products.find((prod) => prod.productCode === 'SAND-001');
+      const b = p?.batches?.find((batch) => batch.batchCode === 'BATCH-SAND-EXPIRED');
+      if (p && b) {
+        addToCart(p, b);
+        return;
+      }
+    }
+    if (code === 'STICKER-BENTO-001') {
+      const p = products.find((prod) => prod.productCode === 'BENTO-001');
+      const b = p?.batches?.find((batch) => batch.batchCode === 'BATCH-BENTO-001');
+      if (p && b) {
+        addToCart(p, b);
+        return;
+      }
+    }
+
+    // 2. Standard JAN Barcode: Sells normal/fresh batch at regular price
+    const found = products.find((p) => p.barcode === code);
     if (found) {
-      addToCart(found);
+      const normalBatch = found.batches?.find((b) => !b.isExpired && !b.isDiscounted && b.remainingQuantity > 0)
+        || found.batches?.find((b) => !b.isExpired && b.remainingQuantity > 0);
+      if (normalBatch) {
+        addToCart(found, normalBatch);
+      } else {
+        alert(`「${found.name}」は有効な在庫がありません。`);
+      }
     }
   }
 
   // Apply recommendation by adding target product to cart with promo
   function applyRecommendation(promo: PosRecommendationItem) {
     const productToAdd = products.find((p) => p.id === promo.targetProductId);
-    if (productToAdd) {
-      setCart((prev) => {
-        const existing = prev.find((i) => i.product.id === productToAdd.id);
-        if (existing) {
-          return prev.map((i) =>
-            i.product.id === productToAdd.id
-              ? { ...i, quantity: i.quantity + 1, appliedPromotion: promo }
-              : i
-          );
-        }
-        return [...prev, { product: productToAdd, quantity: 1, appliedPromotion: promo }];
-      });
+    if (!productToAdd) return;
+
+    const targetBatch = (productToAdd.batches || []).find((b) => b.id === promo.targetBatchId);
+    if (!targetBatch) {
+      alert(`対象ロット (ID: ${promo.targetBatchId}) の在庫が見つかりません。`);
+      return;
     }
+
+    if (targetBatch.isExpired) {
+      alert(`【販売不可】ロット「${targetBatch.batchCode}」は賞味期限が切れているため販売できません。`);
+      return;
+    }
+
+    addToCart(productToAdd, targetBatch);
   }
 
   // Cart Calculations
@@ -335,6 +401,19 @@ export default function PosPage() {
   // Handle Checkout submission
   async function handleCompletePayment() {
     if (cart.length === 0) return;
+
+    // Front-end pre-validation for expired items and stock limits
+    for (const item of cart) {
+      if (item.batch.isExpired) {
+        alert(`【販売不可】「${item.product.name}」(ロット: ${item.batch.batchCode}) は賞味期限が切れています！\nレジから削除し、店頭から撤去してください。`);
+        return;
+      }
+      if (item.quantity > item.batch.remainingQuantity) {
+        alert(`ロット「${item.batch.batchCode}」の注文数 (${item.quantity}個) が現在庫 (${item.batch.remainingQuantity}個) を超過しています。数量を修正してください。`);
+        return;
+      }
+    }
+
     setIsProcessingCheckout(true);
 
     try {
@@ -344,6 +423,7 @@ export default function PosPage() {
         receivedAmount: paymentMethod === 'CASH' ? receivedAmount : totalAmount,
         items: cart.map((i) => ({
           productId: i.product.id,
+          batchId: i.batch.id,
           quantity: i.quantity,
           appliedPromotionId: i.appliedPromotion?.promotionId,
         })),
@@ -355,11 +435,11 @@ export default function PosPage() {
       setRecommendations([]);
       setIsCheckoutOpen(false);
 
-      // Refresh product stock
+      // Refresh product stock across all batches
       const updatedProds = await fetchProducts();
       setProducts(updatedProds);
-    } catch (err) {
-      alert('チェックアウト処理に失敗しました。');
+    } catch (err: any) {
+      alert(err.message || 'チェックアウト処理に失敗しました。');
       console.error(err);
     } finally {
       setIsProcessingCheckout(false);
@@ -394,28 +474,43 @@ export default function PosPage() {
                 <Barcode className="w-4 h-4 text-emerald-600" /> バーコード即時スキャン:
               </span>
               <button
+                onClick={() => scanBarcode('4901234567035')}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 px-2.5 py-1 rounded-md font-semibold transition"
+                title="通常ロットを定価(¥280)で登録"
+              >
+                🥪 サンド通常(JAN) ¥280
+              </button>
+              <button
+                onClick={() => scanBarcode('STICKER-SAND-001')}
+                className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-400 px-2.5 py-1 rounded-md font-bold transition flex items-center gap-1"
+                title="値引きシール(BATCH-SAND-001)をスキャン 40% OFF"
+              >
+                <Sparkles className="w-3 h-3 text-amber-600" /> 🥪 サンド値引シール 40%引 (¥168)
+              </button>
+              <button
+                onClick={() => scanBarcode('EXPIRED-SAND')}
+                className="bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300 px-2.5 py-1 rounded-md font-bold transition flex items-center gap-1"
+                title="賞味期限切れロット(BATCH-SAND-EXPIRED)の販売防止テスト"
+              >
+                <AlertTriangle className="w-3 h-3 text-rose-600" /> ⛔ 期限切れテスト (販売拒否)
+              </button>
+              <button
                 onClick={() => scanBarcode('4901234567011')}
                 className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-md font-semibold transition"
               >
-                チキン南蛮弁当 (¥550)
+                🍱 弁当(通常) ¥550
+              </button>
+              <button
+                onClick={() => scanBarcode('STICKER-BENTO-001')}
+                className="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 px-2.5 py-1 rounded-md font-bold transition"
+              >
+                🍱 弁当シール 20%引 (¥440)
               </button>
               <button
                 onClick={() => scanBarcode('4901234567028')}
                 className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-md font-semibold transition"
               >
-                サーモンサラダ (¥240)
-              </button>
-              <button
-                onClick={() => scanBarcode('4901234567035')}
-                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-md font-semibold transition"
-              >
-                たまごサンド (¥280)
-              </button>
-              <button
-                onClick={() => scanBarcode('4901234567042')}
-                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-md font-semibold transition"
-              >
-                宇治緑茶 (¥140)
+                🥗 サラダ ¥240
               </button>
             </div>
 
@@ -449,35 +544,129 @@ export default function PosPage() {
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3.5">
                 {filteredProducts.map((p) => {
-                  const hasUrgentStock = p.earliestExpiryFormatted.includes('残り');
+                  const isSoldOut = p.totalAvailableStock <= 0;
+                  const hasUrgentStock = !isSoldOut && p.earliestExpiryFormatted.includes('残り');
                   return (
                     <div
                       key={p.id}
-                      onClick={() => addToCart(p)}
-                      className="group bg-white border border-slate-200 hover:border-emerald-500 rounded-xl p-3.5 flex flex-col justify-between cursor-pointer transition shadow-sm hover:shadow-md relative overflow-hidden"
+                      onClick={() => !isSoldOut && addToCart(p)}
+                      className={`group bg-white border rounded-xl p-3.5 flex flex-col justify-between transition shadow-sm relative overflow-hidden ${
+                        isSoldOut
+                          ? 'border-slate-200 opacity-60 cursor-not-allowed bg-slate-50'
+                          : 'border-slate-200 hover:border-emerald-500 cursor-pointer hover:shadow-md'
+                      }`}
                     >
-                      {hasUrgentStock && (
+                      {isSoldOut ? (
+                        <div className="absolute top-2 right-2 bg-rose-600 text-white font-black text-[10px] px-2 py-0.5 rounded-full shadow">
+                          完売 (SOLD OUT)
+                        </div>
+                      ) : hasUrgentStock ? (
                         <div className="absolute top-2 right-2 bg-amber-100 text-amber-900 font-bold text-[10px] px-2 py-0.5 rounded-full border border-amber-300">
                           {p.earliestExpiryFormatted.split(' ')[1] || '期限間近'}
                         </div>
-                      )}
+                      ) : null}
 
                       <div>
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                           {p.categoryName.split(' ')[0]}
                         </span>
-                        <h3 className="font-bold text-sm text-slate-900 line-clamp-2 mt-0.5 group-hover:text-emerald-600 transition-colors">
+                        <h3 className={`font-bold text-sm line-clamp-2 mt-0.5 transition-colors ${
+                          isSoldOut ? 'text-slate-400' : 'text-slate-900 group-hover:text-emerald-600'
+                        }`}>
                           {p.name}
                         </h3>
                         <p className="text-[11px] text-slate-500 mt-1 line-clamp-1">{p.description}</p>
                       </div>
 
-                      <div className="mt-4 pt-2 border-t border-slate-100 flex items-center justify-between">
+                      {/* Batches Breakdown */}
+                      {p.batches && p.batches.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-slate-100 space-y-1" onClick={(e) => e.stopPropagation()}>
+                          <div className="text-[10px] font-bold text-slate-400 flex items-center justify-between">
+                            <span>ロット一覧 ({p.batches.length}):</span>
+                          </div>
+                          <div className="space-y-1 max-h-32 overflow-y-auto pr-0.5">
+                            {p.batches.map((b) => {
+                              if (b.isExpired) {
+                                return (
+                                  <div
+                                    key={b.id}
+                                    onClick={() => alert(`⛔ 【販売不可】ロット「${b.batchCode}」は賞味期限が切れています！\n店頭から直ちに撤去してください（Rule 7: 期限切れ販売禁止）。`)}
+                                    className="p-1 px-1.5 rounded-md bg-rose-50 border border-rose-200 text-[10px] flex items-center justify-between text-rose-700 opacity-70 hover:opacity-100 cursor-pointer"
+                                    title="Rule 7: 賞味期限切れ販売不可"
+                                  >
+                                    <span className="font-bold truncate">{b.batchCode} (期限切れ)</span>
+                                    <span className="text-[9px] font-black bg-rose-200 text-rose-800 px-1 rounded shrink-0">
+                                      販売不可
+                                    </span>
+                                  </div>
+                                );
+                              }
+
+                              if (b.isDiscounted) {
+                                return (
+                                  <div
+                                    key={b.id}
+                                    onClick={() => addToCart(p, b)}
+                                    className="p-1 px-1.5 rounded-md bg-amber-50 hover:bg-amber-100 border border-amber-300 text-[10px] flex items-center justify-between cursor-pointer transition shadow-xs"
+                                    title="値引きシール貼付ロットを追加"
+                                  >
+                                    <div className="truncate pr-1">
+                                      <div className="flex items-center gap-1">
+                                        <span className="bg-amber-400 text-slate-950 font-black px-1 rounded text-[8px]">
+                                          {b.discountPercent}% OFF
+                                        </span>
+                                        <span className="font-bold text-slate-900 truncate">{b.batchCode}</span>
+                                      </div>
+                                      <span className="text-[9px] text-amber-800 font-semibold block">
+                                        ¥{b.finalPrice?.toLocaleString()} (残{b.remainingQuantity}個・{b.hoursUntilExpiry}h)
+                                      </span>
+                                    </div>
+                                    <span className="w-5 h-5 rounded bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs flex items-center justify-center shrink-0">
+                                      +
+                                    </span>
+                                  </div>
+                                );
+                              }
+
+                              // Regular fresh batch
+                              return (
+                                <div
+                                  key={b.id}
+                                  onClick={() => addToCart(p, b)}
+                                  className="p-1 px-1.5 rounded-md bg-slate-50 hover:bg-slate-100 border border-slate-200 text-[10px] flex items-center justify-between cursor-pointer transition"
+                                  title="通常ロットを追加"
+                                >
+                                  <div className="truncate pr-1">
+                                    <span className="font-bold text-slate-700 block truncate">{b.batchCode} (通常)</span>
+                                    <span className="text-[9px] text-slate-500 block">
+                                      ¥{p.price.toLocaleString()} (残{b.remainingQuantity}個・{b.hoursUntilExpiry}h)
+                                    </span>
+                                  </div>
+                                  <span className="w-5 h-5 rounded bg-slate-200 hover:bg-emerald-500 hover:text-white text-slate-700 text-xs flex items-center justify-center shrink-0 transition">
+                                    +
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between">
                         <div>
                           <span className="text-base font-black text-slate-900">¥{p.price.toLocaleString()}</span>
-                          <span className="text-[10px] text-slate-400 block">在庫: {p.totalAvailableStock}個</span>
+                          <span className={`text-[10px] block font-semibold ${isSoldOut ? 'text-rose-500 font-bold' : 'text-slate-400'}`}>
+                            在庫: {p.totalAvailableStock}個
+                          </span>
                         </div>
-                        <button className="w-8 h-8 rounded-lg bg-emerald-500 group-hover:bg-emerald-600 text-white flex items-center justify-center transition shadow">
+                        <button
+                          disabled={isSoldOut}
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center transition shadow ${
+                            isSoldOut
+                              ? 'bg-slate-300 text-slate-400 cursor-not-allowed'
+                              : 'bg-emerald-500 group-hover:bg-emerald-600 text-white'
+                          }`}
+                        >
                           <Plus className="w-4 h-4" />
                         </button>
                       </div>
@@ -617,7 +806,7 @@ export default function PosPage() {
 
                   return (
                     <div
-                      key={item.product.id}
+                      key={`${item.product.id}-${item.batch.id}`}
                       className={`p-3 rounded-xl border transition flex flex-col gap-2 ${
                         isHighlighted
                           ? 'border-amber-400 ring-2 ring-amber-300/80 bg-amber-50/70 shadow-md animate-pulse'
@@ -626,20 +815,35 @@ export default function PosPage() {
                     >
                       <div className="flex justify-between items-start">
                         <div>
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <h4 className="font-bold text-sm text-slate-900">{item.product.name}</h4>
+                            <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200">
+                              ロット: {item.batch.batchCode}
+                            </span>
                             {isHighlighted && (
                               <span className="bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded shadow">
                                 ⚡ 即時更新
                               </span>
                             )}
                           </div>
-                          <span className="text-xs text-slate-500">単価: ¥{item.product.price.toLocaleString()}</span>
-                          {item.appliedPromotion && (
+                          <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-2">
+                            <span>定価: ¥{item.product.price.toLocaleString()}</span>
+                            <span>•</span>
+                            <span className={item.batch.hoursUntilExpiry <= 6 ? 'text-amber-600 font-bold' : ''}>
+                              賞味期限: {item.batch.expiryFormatted || new Date(item.batch.expiryDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          {item.appliedPromotion ? (
                             <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-                              <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-md">
-                                <Sparkles className="w-3 h-3 text-emerald-600" />
-                                {item.appliedPromotion.promotionName || '特売'} ({item.appliedPromotion.discountPercent}% OFF)
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-md">
+                                <Sparkles className="w-3 h-3 text-amber-600" />
+                                値引きシール適用: {item.appliedPromotion.promotionName || '特売'} ({item.appliedPromotion.discountPercent}% OFF)
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="mt-1">
+                              <span className="inline-flex items-center text-[10px] font-semibold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                                通常ロット（定価販売）
                               </span>
                             </div>
                           )}
@@ -647,7 +851,7 @@ export default function PosPage() {
                         <div className="text-right">
                           <span className="font-black text-sm text-slate-900">¥{lineFinal.toLocaleString()}</span>
                           {lineDiscount > 0 && (
-                            <span className="block text-[10px] text-emerald-600 font-bold">
+                            <span className="block text-[10px] text-rose-600 font-bold">
                               -¥{lineDiscount.toLocaleString()} ({item.appliedPromotion?.discountPercent}% OFF)
                             </span>
                           )}
@@ -658,21 +862,28 @@ export default function PosPage() {
                       <div className="flex items-center justify-between pt-1 border-t border-slate-100">
                         <div className="flex items-center gap-2">
                           <button
-                            onClick={() => updateQuantity(item.product.id, -1)}
-                            className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-600 text-xs"
+                            onClick={() => updateQuantity(item.product.id, item.batch.id, -1)}
+                            className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-600 text-xs transition"
                           >
                             <Minus className="w-3 h-3" />
                           </button>
                           <span className="text-xs font-bold w-6 text-center">{item.quantity}</span>
                           <button
-                            onClick={() => updateQuantity(item.product.id, 1)}
-                            className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-600 text-xs"
+                            disabled={item.quantity >= item.batch.remainingQuantity}
+                            onClick={() => updateQuantity(item.product.id, item.batch.id, 1)}
+                            className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-slate-600 text-xs transition"
+                            title={item.quantity >= item.batch.remainingQuantity ? `ロット在庫上限 (${item.batch.remainingQuantity}個) に達しました` : '1点追加'}
                           >
                             <Plus className="w-3 h-3" />
                           </button>
+                          {item.quantity >= item.batch.remainingQuantity && (
+                            <span className="text-[10px] text-rose-500 font-bold ml-1">
+                              (ロット在庫上限: {item.batch.remainingQuantity}個)
+                            </span>
+                          )}
                         </div>
                         <button
-                          onClick={() => removeFromCart(item.product.id)}
+                          onClick={() => removeFromCart(item.product.id, item.batch.id)}
                           className="text-xs text-slate-400 hover:text-rose-500"
                         >
                           削除
@@ -868,7 +1079,7 @@ export default function PosPage() {
                   <div>
                     <span className="font-bold">{item.productName}</span>
                     <span className="block text-[10px] text-slate-500">
-                      ¥{item.unitPrice} × {item.quantity}点
+                      ロット: {item.batchCode || '通常'} | ¥{item.unitPrice} × {item.quantity}点
                     </span>
                   </div>
                   <div className="text-right">

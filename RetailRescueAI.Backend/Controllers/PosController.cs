@@ -31,6 +31,10 @@ public class PosController : ControllerBase
         CancellationToken cancellationToken)
     {
         var response = await _posService.CheckoutAsync(request, cancellationToken);
+        if (!response.Success)
+        {
+            return BadRequest(response);
+        }
         return Ok(response);
     }
 
