@@ -1,4 +1,6 @@
+using Microsoft.AspNetCore.SignalR;
 using RetailRescueAI.Backend.DTOs;
+using RetailRescueAI.Backend.Hubs;
 using RetailRescueAI.Backend.Models;
 using RetailRescueAI.Backend.Repositories.Interfaces;
 using RetailRescueAI.Backend.Services.Interfaces;
@@ -8,10 +10,14 @@ namespace RetailRescueAI.Backend.Services.Implementations;
 public class PromotionService : IPromotionService
 {
     private readonly IPromotionRepository _promotionRepository;
+    private readonly IHubContext<PromotionHub> _hubContext;
 
-    public PromotionService(IPromotionRepository promotionRepository)
+    public PromotionService(
+        IPromotionRepository promotionRepository,
+        IHubContext<PromotionHub> hubContext)
     {
         _promotionRepository = promotionRepository;
+        _hubContext = hubContext;
     }
 
     public async Task<List<PromotionDto>> GetPromotionsAsync(string? status, CancellationToken cancellationToken = default)
@@ -104,6 +110,27 @@ public class PromotionService : IPromotionService
 
         _promotionRepository.Update(promo);
         await _promotionRepository.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await _hubContext.Clients.All.SendAsync("PromotionApproved", new
+            {
+                promotionId = promo.Id,
+                promotionCode = promo.PromotionCode,
+                promotionName = promo.Name,
+                targetProductId = promo.TargetProductId,
+                targetProductName = promo.TargetProduct?.Name,
+                discountPercent = promo.DiscountPercent,
+                startTime = promo.StartTime,
+                endTime = promo.EndTime,
+                message = $"【新着特売適用】「{promo.Name}」が店長により承認されました！"
+            }, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[SignalR] Broadcast error: {ex.Message}");
+        }
+
         return true;
     }
 

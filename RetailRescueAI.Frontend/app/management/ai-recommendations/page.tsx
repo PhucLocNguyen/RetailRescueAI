@@ -7,6 +7,7 @@ import {
   approveAIRecommendation,
   rejectAIRecommendation,
 } from '@/lib/api';
+import AiAgentWorkflowModal from '@/components/AiAgentWorkflowModal';
 import {
   Sparkles,
   CheckCircle2,
@@ -18,6 +19,8 @@ import {
   RefreshCw,
   FileText,
   AlertTriangle,
+  Play,
+  Sliders,
 } from 'lucide-react';
 
 export default function AiRecommendationsPage() {
@@ -25,6 +28,8 @@ export default function AiRecommendationsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('PENDING');
   const [processingId, setProcessingId] = useState<number | null>(null);
+  const [customDiscounts, setCustomDiscounts] = useState<Record<number, number>>({});
+  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
 
   useEffect(() => {
     loadRecommendations();
@@ -42,15 +47,15 @@ export default function AiRecommendationsPage() {
     }
   }
 
-  async function handleApprove(id: number, title: string) {
-    if (!confirm(`提案「${title}」を承認しますか？\n承認すると直ちにPOSレジでおすすめとして有効化されます。`)) {
+  async function handleApprove(id: number, title: string, discountPercent: number) {
+    if (!confirm(`提案「${title}」を ${discountPercent}% 割引で承認しますか？\n承認すると直ちにPOSレジで適用されます。`)) {
       return;
     }
 
     setProcessingId(id);
     try {
-      await approveAIRecommendation(id);
-      alert('プロモーションを承認しました！レジ画面で即時有効になります。');
+      await approveAIRecommendation(id, discountPercent);
+      alert(`プロモーションを ${discountPercent}% 割引で承認しました！レジ画面で即時有効になります。`);
       await loadRecommendations();
     } catch (err) {
       alert('承認処理に失敗しました。');
@@ -98,13 +103,23 @@ export default function AiRecommendationsPage() {
           </p>
         </div>
 
-        <button
-          onClick={loadRecommendations}
-          className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl shadow-xs flex items-center gap-2"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-          <span>一覧を更新</span>
-        </button>
+        <div className="flex items-center gap-2.5">
+          <button
+            onClick={() => setIsAiModalOpen(true)}
+            className="px-4 py-2 bg-gradient-to-r from-purple-600 via-indigo-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition active:scale-95"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+            <span>AIパイプライン実演デモ</span>
+          </button>
+
+          <button
+            onClick={loadRecommendations}
+            className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl shadow-xs flex items-center gap-2"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>一覧を更新</span>
+          </button>
+        </div>
       </div>
 
       {/* Filter Tabs */}
@@ -237,6 +252,60 @@ export default function AiRecommendationsPage() {
                   </div>
                 </div>
 
+                {/* Manager Discount % Adjuster (Only on PENDING proposals) */}
+                {isPending && (
+                  <div className="bg-indigo-50/60 p-4 rounded-xl border border-indigo-200/80 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5 font-black text-indigo-950">
+                        <Sliders className="w-4 h-4 text-indigo-600" />
+                        <span>店長による割引率の調整（AI推奨: {rec.recommendedDiscountPercent || 20}% OFF）</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        店舗の立地・天候・客足に合わせて割引率を微調整できます。承認すると即時POSレジへ反映されます。
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-3 bg-white p-2 rounded-xl border border-indigo-200 shadow-xs">
+                      {/* Quick percent buttons */}
+                      <div className="flex items-center gap-1">
+                        {[10, 15, 20, 25, 30, 40, 50].map((pct) => {
+                          const currentPct = customDiscounts[rec.id] ?? rec.recommendedDiscountPercent ?? 20;
+                          const isSelected = currentPct === pct;
+                          return (
+                            <button
+                              key={pct}
+                              onClick={() => setCustomDiscounts((prev) => ({ ...prev, [rec.id]: pct }))}
+                              className={`px-2.5 py-1 rounded-lg font-black text-xs transition ${
+                                isSelected
+                                  ? 'bg-indigo-600 text-white shadow-xs'
+                                  : 'bg-slate-50 border border-slate-200 text-slate-700 hover:bg-indigo-50'
+                              }`}
+                            >
+                              {pct}%
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Manual input */}
+                      <div className="flex items-center gap-1 pl-2 border-l border-slate-200">
+                        <input
+                          type="number"
+                          min="5"
+                          max="80"
+                          value={customDiscounts[rec.id] ?? rec.recommendedDiscountPercent ?? 20}
+                          onChange={(e) => {
+                            const val = Math.min(80, Math.max(5, Number(e.target.value)));
+                            setCustomDiscounts((prev) => ({ ...prev, [rec.id]: val }));
+                          }}
+                          className="w-12 px-1.5 py-0.5 bg-slate-50 border border-slate-300 rounded text-center font-black text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                        <span className="font-bold text-slate-600">% OFF</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Guardrails Validation & Approval Actions */}
                 <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-t border-slate-100 text-xs">
                   <div className="flex items-center gap-2 text-slate-500">
@@ -256,11 +325,16 @@ export default function AiRecommendationsPage() {
                       </button>
                       <button
                         disabled={processingId === rec.id}
-                        onClick={() => handleApprove(rec.id, rec.recommendedAction)}
-                        className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl shadow-md transition flex items-center gap-1.5"
+                        onClick={() => {
+                          const activeDiscount = customDiscounts[rec.id] ?? rec.recommendedDiscountPercent ?? 20;
+                          handleApprove(rec.id, rec.recommendedAction, activeDiscount);
+                        }}
+                        className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl shadow-md transition flex items-center gap-1.5 active:scale-95"
                       >
                         <CheckCircle2 className="w-4 h-4 text-white" />
-                        <span>承認して有効化</span>
+                        <span>
+                          {customDiscounts[rec.id] ?? rec.recommendedDiscountPercent ?? 20}% OFF で承認して有効化
+                        </span>
                       </button>
                     </div>
                   )}
@@ -270,6 +344,13 @@ export default function AiRecommendationsPage() {
           })
         )}
       </div>
+
+      {/* AI Multi-Agent Workflow Visualizer Modal */}
+      <AiAgentWorkflowModal
+        isOpen={isAiModalOpen}
+        onClose={() => setIsAiModalOpen(false)}
+        onComplete={loadRecommendations}
+      />
     </div>
   );
 }

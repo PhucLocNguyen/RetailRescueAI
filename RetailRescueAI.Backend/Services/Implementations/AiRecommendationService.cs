@@ -1,4 +1,6 @@
+using Microsoft.AspNetCore.SignalR;
 using RetailRescueAI.Backend.DTOs;
+using RetailRescueAI.Backend.Hubs;
 using RetailRescueAI.Backend.Models;
 using RetailRescueAI.Backend.Repositories.Interfaces;
 using RetailRescueAI.Backend.Services.AI.Agents;
@@ -11,15 +13,18 @@ public class AiRecommendationService : IAiRecommendationService
     private readonly IAiRecommendationRepository _recommendationRepository;
     private readonly IPromotionRepository _promotionRepository;
     private readonly OrchestratorAgent _orchestratorAgent;
+    private readonly IHubContext<PromotionHub> _hubContext;
 
     public AiRecommendationService(
         IAiRecommendationRepository recommendationRepository,
         IPromotionRepository promotionRepository,
-        OrchestratorAgent orchestratorAgent)
+        OrchestratorAgent orchestratorAgent,
+        IHubContext<PromotionHub> hubContext)
     {
         _recommendationRepository = recommendationRepository;
         _promotionRepository = promotionRepository;
         _orchestratorAgent = orchestratorAgent;
+        _hubContext = hubContext;
     }
 
     public async Task<List<AIRecommendationDto>> GetRecommendationsAsync(CancellationToken cancellationToken = default)
@@ -63,6 +68,17 @@ public class AiRecommendationService : IAiRecommendationService
         rec.ReviewedAt = now;
         rec.ReviewedBy = "佐藤 店長 (Manager)";
 
+        // Support Manager adjusting discount %
+        decimal finalDiscount = (request?.CustomDiscountPercent.HasValue == true && request.CustomDiscountPercent.Value > 0)
+            ? request.CustomDiscountPercent.Value
+            : (rec.RecommendedDiscountPercent ?? 20m);
+
+        rec.RecommendedDiscountPercent = finalDiscount;
+        if (request?.CustomDiscountPercent.HasValue == true)
+        {
+            rec.RecommendedAction = $"{rec.TargetProduct?.Name ?? "対象商品"} {finalDiscount:F0}% OFF（店長指定割）";
+        }
+
         var promo = new Promotion
         {
             PromotionCode = $"PROMO-{now:yyyyMMddHHmmss}",
@@ -71,7 +87,7 @@ public class AiRecommendationService : IAiRecommendationService
             Status = "APPROVED",
             TargetProductId = rec.TargetProductId,
             TargetBatchId = rec.TargetBatchId,
-            DiscountPercent = rec.RecommendedDiscountPercent,
+            DiscountPercent = finalDiscount,
             ComboPrice = rec.RecommendedComboPrice,
             StartTime = rec.StartTime,
             EndTime = rec.EndTime,
@@ -91,6 +107,28 @@ public class AiRecommendationService : IAiRecommendationService
         _recommendationRepository.Update(rec);
         await _recommendationRepository.SaveChangesAsync(cancellationToken);
 
+        // Broadcast Real-time event to POS screens via SignalR
+        try
+        {
+            await _hubContext.Clients.All.SendAsync("PromotionApproved", new
+            {
+                promotionId = promo.Id,
+                promotionCode = promo.PromotionCode,
+                promotionName = promo.Name,
+                targetProductId = promo.TargetProductId,
+                targetProductName = rec.TargetProduct?.Name,
+                discountPercent = promo.DiscountPercent,
+                startTime = promo.StartTime,
+                endTime = promo.EndTime,
+                message = $"【新着特売適用】{rec.TargetProduct?.Name} が {promo.DiscountPercent:F0}% OFF に承認されました！"
+            }, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // Log SignalR broadcast error but don't fail promotion approval
+            System.Console.WriteLine($"[SignalR] Broadcast error: {ex.Message}");
+        }
+
         return (true, $"提案「{rec.RecommendedAction}」を承認しました。プロモーションがレジで有効化されました。", promo.Id);
     }
 
@@ -108,10 +146,15 @@ public class AiRecommendationService : IAiRecommendationService
         return true;
     }
 
-    public async Task<int> RunManualPipelineAsync(CancellationToken cancellationToken = default)
+    public async Task<AiPipelineRunResponse> RunManualPipelineAsync(CancellationToken cancellationToken = default)
     {
-        var created = await _orchestratorAgent.RunFullPipelineAsync(cancellationToken);
-        return created.Count;
+        var (created, steps) = await _orchestratorAgent.RunFullPipelineWithTraceAsync(cancellationToken);
+        return new AiPipelineRunResponse(
+            Success: true,
+            Message: $"AI分析が正常に完了しました。{created.Count}件の提案を登録しました。",
+            CreatedCount: created.Count,
+            Steps: steps
+        );
     }
 }
 

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using RetailRescueAI.Backend.Data;
+using RetailRescueAI.Backend.Hubs;
 using RetailRescueAI.Backend.Repositories.Implementations;
 using RetailRescueAI.Backend.Repositories.Interfaces;
 using RetailRescueAI.Backend.Services.AI;
@@ -27,16 +28,20 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     }
 });
 
-// 2. CORS Policy for Next.js Frontend
+// 2. CORS Policy for Next.js Frontend & SignalR Real-time
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.SetIsOriginAllowed(_ => true)
               .AllowAnyMethod()
-              .AllowAnyHeader();
+              .AllowAnyHeader()
+              .AllowCredentials();
     });
 });
+
+// 2.1 SignalR for Real-time POS notifications
+builder.Services.AddSignalR();
 
 // 3. Authentication & JWT
 var jwtKey = builder.Configuration["Jwt:Key"] ?? "RetailRescueAI_SuperSecretKey_2026_Enterprise_Security_JwtToken!";
@@ -123,11 +128,13 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-// 9. HTTP Request Pipeline
-if (app.Environment.IsDevelopment())
+// 9. HTTP Request Pipeline & Swagger UI
+app.MapOpenApi();
+app.UseSwaggerUI(options =>
 {
-    app.MapOpenApi();
-}
+    options.SwaggerEndpoint("/openapi/v1.json", "RetailRescueAI API v1");
+    options.RoutePrefix = "swagger";
+});
 
 app.UseCors("AllowAll");
 
@@ -136,5 +143,8 @@ app.UseAuthorization();
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "healthy", time = DateTime.UtcNow }));
 app.MapControllers();
+
+// 10. SignalR Hub Endpoints
+app.MapHub<PromotionHub>("/hubs/promotions");
 
 app.Run();

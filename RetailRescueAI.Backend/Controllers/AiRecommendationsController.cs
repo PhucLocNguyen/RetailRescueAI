@@ -56,16 +56,11 @@ public class AiRecommendationsController : ControllerBase
     }
 
     [HttpPost("run")]
-    public async Task<ActionResult> TriggerManualAiAnalysis(CancellationToken cancellationToken)
+    public async Task<ActionResult<AiPipelineRunResponse>> TriggerManualAiAnalysis(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Manager triggered manual AI analysis pipeline.");
-        var createdCount = await _recommendationService.RunManualPipelineAsync(cancellationToken);
-        return Ok(new
-        {
-            success = true,
-            message = "AI分析が正常に完了しました。",
-            createdCount
-        });
+        var response = await _recommendationService.RunManualPipelineAsync(cancellationToken);
+        return Ok(response);
     }
 }
 

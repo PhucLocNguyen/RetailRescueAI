@@ -7,8 +7,8 @@ import {
   InventoryBatch,
   fetchDashboardStats,
   fetchBatches,
-  triggerManualAiRun,
 } from '@/lib/api';
+import AiAgentWorkflowModal from '@/components/AiAgentWorkflowModal';
 import {
   AlertTriangle,
   Sparkles,
@@ -20,13 +20,14 @@ import {
   ArrowRight,
   RefreshCw,
   Coins,
+  Play,
 } from 'lucide-react';
 
 export default function ManagementDashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [urgentBatches, setUrgentBatches] = useState<InventoryBatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isAiRunning, setIsAiRunning] = useState(false);
+  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
 
   useEffect(() => {
@@ -52,31 +53,16 @@ export default function ManagementDashboardPage() {
     }
   }
 
-  async function handleRunAi() {
-    setIsAiRunning(true);
-    try {
-      await triggerManualAiRun();
-      await loadData();
-      alert('AIエージェントによる全店舗データの分析が完了しました。保留中の提案が更新されました。');
-    } catch (err) {
-      alert('AI分析の実行に失敗しました。');
-      console.error(err);
-    } finally {
-      setIsAiRunning(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
-      {/* Header Bar */}
-      <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      {/* Page Header */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
-          <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider bg-indigo-50 px-2.5 py-1 rounded-md">
-            店長ダッシュボード
-          </span>
-          <h1 className="text-2xl font-black text-slate-900 mt-1">店舗運用 ＆ 廃棄リスク概況</h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            最終データ更新: {lastUpdated.toLocaleTimeString('ja-JP')}（AI自動分析周期: 3時間毎）
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+            店舗マネジメント・ダッシュボード
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">
+            ライフマート 新宿東口店 | 最終更新: {lastUpdated.toLocaleTimeString('ja-JP')}
           </p>
         </div>
 
@@ -90,12 +76,11 @@ export default function ManagementDashboardPage() {
           </button>
 
           <button
-            onClick={handleRunAi}
-            disabled={isAiRunning}
-            className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-50 text-white font-bold text-sm rounded-xl shadow-md hover:shadow-lg transition flex items-center gap-2"
+            onClick={() => setIsAiModalOpen(true)}
+            className="px-5 py-2.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white font-black text-xs rounded-xl shadow-md hover:shadow-lg transition flex items-center gap-2 active:scale-95"
           >
-            <Sparkles className={`w-4 h-4 text-amber-300 ${isAiRunning ? 'animate-spin' : ''}`} />
-            <span>{isAiRunning ? 'AIエージェント分析中...' : 'AI分析を手動実行'}</span>
+            <Sparkles className="w-4 h-4 text-amber-300" />
+            <span>AIパイプライン実演デモ (手動実行)</span>
           </button>
         </div>
       </div>
@@ -332,6 +317,13 @@ export default function ManagementDashboardPage() {
           </table>
         </div>
       </div>
+
+      {/* AI Multi-Agent Workflow Visualizer Modal */}
+      <AiAgentWorkflowModal
+        isOpen={isAiModalOpen}
+        onClose={() => setIsAiModalOpen(false)}
+        onComplete={loadData}
+      />
     </div>
   );
 }

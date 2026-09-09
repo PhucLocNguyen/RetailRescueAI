@@ -1,4 +1,5 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5205/api';
+export const SIGNALR_HUB_URL = process.env.NEXT_PUBLIC_SIGNALR_URL || 'http://localhost:5205/hubs/promotions';
 
 export interface PosProduct {
   id: number;
@@ -169,11 +170,28 @@ export async function fetchAIRecommendations(): Promise<AIRecommendation[]> {
   return res.json();
 }
 
-export async function approveAIRecommendation(id: number): Promise<any> {
+export interface AiAgentTraceStep {
+  agentKey: string;
+  agentName: string;
+  roleTitle: string;
+  description: string;
+  details: string[];
+  status: string;
+  durationMs: number;
+}
+
+export interface AiPipelineRunResponse {
+  success: boolean;
+  message: string;
+  createdCount: number;
+  steps: AiAgentTraceStep[];
+}
+
+export async function approveAIRecommendation(id: number, customDiscountPercent?: number): Promise<any> {
   const res = await fetch(`${API_BASE_URL}/ai/recommendations/${id}/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({})
+    body: JSON.stringify({ customDiscountPercent })
   });
   if (!res.ok) throw new Error('AI提案の承認に失敗しました。');
   return res.json();
@@ -189,7 +207,7 @@ export async function rejectAIRecommendation(id: number, reason: string): Promis
   return res.json();
 }
 
-export async function triggerManualAiRun(): Promise<any> {
+export async function triggerManualAiRun(): Promise<AiPipelineRunResponse> {
   const res = await fetch(`${API_BASE_URL}/ai/run`, {
     method: 'POST',
   });

@@ -141,7 +141,8 @@ public record AIEvidenceDto(
 );
 
 public record ApproveRecommendationRequest(
-    string? Notes
+    string? Notes,
+    decimal? CustomDiscountPercent = null
 );
 
 public record RejectRecommendationRequest(
@@ -246,4 +247,23 @@ public record PromotionResultDto(
     decimal ActualRevenue,
     DateTime EvaluatedAt
 );
+
+// AI Multi-Agent Pipeline Trace
+public record AiAgentTraceStepDto(
+    string AgentKey,
+    string AgentName,
+    string RoleTitle,
+    string Description,
+    List<string> Details,
+    string Status,
+    int DurationMs
+);
+
+public record AiPipelineRunResponse(
+    bool Success,
+    string Message,
+    int CreatedCount,
+    List<AiAgentTraceStepDto> Steps
+);
+
 

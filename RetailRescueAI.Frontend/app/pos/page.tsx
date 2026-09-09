@@ -2,10 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import Navbar from '@/components/Navbar';
+import * as signalR from '@microsoft/signalr';
 import {
   PosProduct,
   PosRecommendationItem,
   Customer,
+  SIGNALR_HUB_URL,
   fetchProducts,
   fetchCustomers,
   fetchPosRecommendations,
@@ -27,6 +29,8 @@ import {
   User,
   Receipt,
   RotateCcw,
+  Zap,
+  Radio,
 } from 'lucide-react';
 
 interface CartItem {
@@ -45,12 +49,153 @@ export default function PosPage() {
   const [recommendations, setRecommendations] = useState<PosRecommendationItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  // SignalR Real-time Promotion State
+  const [isSignalRConnected, setIsSignalRConnected] = useState(false);
+  const [realtimeNotification, setRealtimeNotification] = useState<{
+    id: number;
+    message: string;
+    discountPercent: number;
+    productName: string;
+  } | null>(null);
+  const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null);
+
   // Checkout state
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CARD' | 'QR_CODE'>('CASH');
   const [receivedAmount, setReceivedAmount] = useState<number>(0);
   const [completedReceipt, setCompletedReceipt] = useState<any | null>(null);
   const [isProcessingCheckout, setIsProcessingCheckout] = useState(false);
+
+  // Connect to SignalR PromotionHub for instant promotion notifications
+  useEffect(() => {
+    let isMounted = true;
+    const connection = new signalR.HubConnectionBuilder()
+      .withUrl(SIGNALR_HUB_URL, {
+        skipNegotiation: false,
+        transport: signalR.HttpTransportType.WebSockets | signalR.HttpTransportType.LongPolling,
+      })
+      .withAutomaticReconnect([0, 2000, 5000, 10000])
+      .configureLogging(signalR.LogLevel.Information)
+      .build();
+
+    connection
+      .start()
+      .then(() => {
+        if (isMounted) {
+          console.log('[SignalR] Connected successfully to PromotionHub');
+          setIsSignalRConnected(true);
+        }
+      })
+      .catch((err) => {
+        if (isMounted) {
+          console.warn('[SignalR] Failed to connect initially (will auto-retry):', err);
+          setIsSignalRConnected(false);
+        }
+      });
+
+    connection.onclose(() => {
+      if (isMounted) setIsSignalRConnected(false);
+    });
+    connection.onreconnecting(() => {
+      if (isMounted) setIsSignalRConnected(false);
+    });
+    connection.onreconnected(() => {
+      if (isMounted) setIsSignalRConnected(true);
+    });
+
+    connection.on('PromotionApproved', (data: {
+      promotionId: number;
+      promotionCode: string;
+      promotionName: string;
+      targetProductId?: number;
+      targetProductName?: string;
+      discountPercent?: number;
+      message: string;
+    }) => {
+      console.log('[SignalR] Received PromotionApproved event:', data);
+      const discountRate = data.discountPercent ?? 20;
+      const prodName = data.targetProductName || '対象商品';
+
+      // 1. Show dynamic notification banner
+      setRealtimeNotification({
+        id: data.promotionId,
+        message: data.message || `【新着特売】${prodName} が ${discountRate}% OFF に承認されました！`,
+        discountPercent: discountRate,
+        productName: prodName,
+      });
+
+      // Dismiss notification banner automatically after 9 seconds
+      setTimeout(() => {
+        setRealtimeNotification((curr) => (curr?.id === data.promotionId ? null : curr));
+      }, 9000);
+
+      // 2. If targetProductId is present, auto-apply to cart if it's in cart!
+      if (data.targetProductId) {
+        const targetId = data.targetProductId;
+
+        setCart((prevCart) => {
+          const itemExists = prevCart.some((i) => i.product.id === targetId);
+          if (!itemExists) return prevCart;
+
+          // Highlight matching item in cart
+          setHighlightedProductId(targetId);
+          setTimeout(() => setHighlightedProductId(null), 3500);
+
+          return prevCart.map((item) => {
+            if (item.product.id === targetId) {
+              const promoItem: PosRecommendationItem = {
+                promotionId: data.promotionId,
+                promotionCode: data.promotionCode,
+                promotionName: data.promotionName,
+                promotionType: 'PRICE_DISCOUNT',
+                targetProductId: targetId,
+                targetProductName: prodName,
+                originalPrice: item.product.price,
+                discountPercent: discountRate,
+                finalPrice: Math.round(item.product.price * (1 - discountRate / 100)),
+                message: data.message,
+                actionPrompt: '店長承認により自動適用されました',
+              };
+              return {
+                ...item,
+                appliedPromotion: promoItem,
+              };
+            }
+            return item;
+          });
+        });
+
+        // Also add or update the recommendation in POS recommendations panel
+        setRecommendations((prevRecs) => {
+          const newPromo: PosRecommendationItem = {
+            promotionId: data.promotionId,
+            promotionCode: data.promotionCode,
+            promotionName: data.promotionName,
+            promotionType: 'PRICE_DISCOUNT',
+            targetProductId: targetId,
+            targetProductName: prodName,
+            originalPrice: 0,
+            discountPercent: discountRate,
+            finalPrice: 0,
+            message: data.message,
+            actionPrompt: '店長承認により有効化',
+          };
+          const exists = prevRecs.some((r) => r.promotionId === data.promotionId || r.targetProductId === targetId);
+          if (exists) {
+            return prevRecs.map((r) =>
+              r.promotionId === data.promotionId || r.targetProductId === targetId ? newPromo : r
+            );
+          }
+          return [newPromo, ...prevRecs];
+        });
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      connection.stop();
+    };
+  }, []);
 
   // Load initial products & customers
   useEffect(() => {
@@ -350,19 +495,63 @@ export default function PosPage() {
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col flex-1 overflow-hidden">
             {/* Cart Header */}
             <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-900 text-white">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2.5">
                 <ShoppingBag className="w-5 h-5 text-emerald-400" />
                 <h2 className="font-bold text-base">お買物カゴ ({cart.reduce((s, i) => s + i.quantity, 0)}点)</h2>
               </div>
-              {cart.length > 0 && (
-                <button
-                  onClick={clearCart}
-                  className="text-xs text-slate-400 hover:text-rose-400 flex items-center gap-1 transition"
+              <div className="flex items-center gap-2">
+                <div
+                  className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition ${
+                    isSignalRConnected
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40'
+                      : 'bg-amber-500/20 text-amber-300 border-amber-400/40'
+                  }`}
+                  title={isSignalRConnected ? 'SignalR経由で店長端末とリアルタイム同期中' : 'オフライン・ローカル動作中'}
                 >
-                  <Trash2 className="w-3.5 h-3.5" /> クリア
-                </button>
-              )}
+                  <span className={`w-1.5 h-1.5 rounded-full ${isSignalRConnected ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'}`} />
+                  <span>{isSignalRConnected ? 'LIVE 連携中' : '同期準備中'}</span>
+                </div>
+
+                {cart.length > 0 && (
+                  <button
+                    onClick={clearCart}
+                    className="text-xs text-slate-400 hover:text-rose-400 flex items-center gap-1 transition ml-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> クリア
+                  </button>
+                )}
+              </div>
             </div>
+
+            {/* Real-time Notification Banner */}
+            {realtimeNotification && (
+              <div className="p-3 bg-gradient-to-r from-amber-500 via-emerald-600 to-teal-600 text-white shadow-md flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-3 duration-200">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center shrink-0 animate-bounce">
+                    <Zap className="w-4 h-4 text-amber-300" />
+                  </div>
+                  <div className="truncate">
+                    <div className="flex items-center gap-1.5">
+                      <span className="bg-amber-400 text-slate-950 text-[9px] font-black px-1.5 py-0.2 rounded uppercase tracking-wider">
+                        ⚡ リアルタイム反映
+                      </span>
+                      <span className="text-[11px] font-bold text-amber-200 truncate">
+                        店長が特売を承認しました
+                      </span>
+                    </div>
+                    <p className="text-xs font-black text-white truncate">
+                      {realtimeNotification.productName} ➔ <span className="text-amber-300 underline font-black">{realtimeNotification.discountPercent}% OFF</span>
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setRealtimeNotification(null)}
+                  className="text-xs text-white/80 hover:text-white px-2 py-1 bg-black/20 hover:bg-black/30 rounded shrink-0"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
             {/* Member Selection */}
             <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs">
@@ -424,16 +613,36 @@ export default function PosPage() {
                   const discountRate = item.appliedPromotion ? item.appliedPromotion.discountPercent / 100 : 0;
                   const lineDiscount = Math.round(lineSubtotal * discountRate);
                   const lineFinal = lineSubtotal - lineDiscount;
+                  const isHighlighted = item.product.id === highlightedProductId;
 
                   return (
                     <div
                       key={item.product.id}
-                      className="p-3 rounded-xl border border-slate-200 bg-white hover:border-slate-300 transition flex flex-col gap-2"
+                      className={`p-3 rounded-xl border transition flex flex-col gap-2 ${
+                        isHighlighted
+                          ? 'border-amber-400 ring-2 ring-amber-300/80 bg-amber-50/70 shadow-md animate-pulse'
+                          : 'border-slate-200 bg-white hover:border-slate-300'
+                      }`}
                     >
                       <div className="flex justify-between items-start">
                         <div>
-                          <h4 className="font-bold text-sm text-slate-900">{item.product.name}</h4>
+                          <div className="flex items-center gap-1.5">
+                            <h4 className="font-bold text-sm text-slate-900">{item.product.name}</h4>
+                            {isHighlighted && (
+                              <span className="bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded shadow">
+                                ⚡ 即時更新
+                              </span>
+                            )}
+                          </div>
                           <span className="text-xs text-slate-500">単価: ¥{item.product.price.toLocaleString()}</span>
+                          {item.appliedPromotion && (
+                            <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-md">
+                                <Sparkles className="w-3 h-3 text-emerald-600" />
+                                {item.appliedPromotion.promotionName || '特売'} ({item.appliedPromotion.discountPercent}% OFF)
+                              </span>
+                            </div>
+                          )}
                         </div>
                         <div className="text-right">
                           <span className="font-black text-sm text-slate-900">¥{lineFinal.toLocaleString()}</span>
