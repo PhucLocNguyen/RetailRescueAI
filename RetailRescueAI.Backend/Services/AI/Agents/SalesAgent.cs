@@ -1,6 +1,5 @@
-using Microsoft.EntityFrameworkCore;
-using RetailRescueAI.Backend.Data;
 using RetailRescueAI.Backend.Models;
+using RetailRescueAI.Backend.Repositories.Interfaces;
 
 namespace RetailRescueAI.Backend.Services.AI.Agents;
 
@@ -17,12 +16,12 @@ public record SalesAnalysisResult(
 
 public class SalesAgent
 {
-    private readonly AppDbContext _context;
+    private readonly ISaleRepository _saleRepository;
     private readonly ILogger<SalesAgent> _logger;
 
-    public SalesAgent(AppDbContext context, ILogger<SalesAgent> logger)
+    public SalesAgent(ISaleRepository saleRepository, ILogger<SalesAgent> logger)
     {
-        _context = context;
+        _saleRepository = saleRepository;
         _logger = logger;
     }
 
@@ -37,10 +36,7 @@ public class SalesAgent
 
         // Analyze last 7 days of sales for each product
         var sevenDaysAgo = currentReferenceTime.AddDays(-7);
-        var recentSaleItems = await _context.SaleItems
-            .Include(si => si.Sale)
-            .Where(si => si.Sale!.CreatedAt >= sevenDaysAgo && si.Sale.Status == "COMPLETED")
-            .ToListAsync(cancellationToken);
+        var recentSaleItems = await _saleRepository.GetRecentSaleItemsAsync(sevenDaysAgo, cancellationToken);
 
         foreach (var exp in expiryResults)
         {

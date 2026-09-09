@@ -17,7 +17,6 @@ public static class DbInitializer
 
     public static async Task InitializeAsync(AppDbContext context)
     {
-        await context.Database.EnsureDeletedAsync();
         await context.Database.EnsureCreatedAsync();
 
         if (await context.Users.AnyAsync())

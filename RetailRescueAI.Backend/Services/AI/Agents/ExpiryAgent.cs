@@ -1,5 +1,3 @@
-using Microsoft.EntityFrameworkCore;
-using RetailRescueAI.Backend.Data;
 using RetailRescueAI.Backend.Models;
 
 namespace RetailRescueAI.Backend.Services.AI.Agents;

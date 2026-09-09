@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using RetailRescueAI.Backend.DTOs;
-using RetailRescueAI.Backend.Services.AI;
+using RetailRescueAI.Backend.Services.Interfaces;
 
 namespace RetailRescueAI.Backend.Controllers;
 
@@ -8,17 +8,17 @@ namespace RetailRescueAI.Backend.Controllers;
 [Route("api/[controller]")]
 public class ChatbotController : ControllerBase
 {
-    private readonly ManagerChatbotService _chatbotService;
+    private readonly IChatbotService _chatbotService;
 
-    public ChatbotController(ManagerChatbotService chatbotService)
+    public ChatbotController(IChatbotService chatbotService)
     {
         _chatbotService = chatbotService;
     }
 
     [HttpPost("message")]
-    public async Task<ActionResult<ChatResponse>> SendMessage([FromBody] ChatRequest request)
+    public async Task<ActionResult<ChatResponse>> SendMessage([FromBody] ChatRequest request, CancellationToken cancellationToken)
     {
-        var response = await _chatbotService.ProcessChatAsync(request);
+        var response = await _chatbotService.ProcessChatAsync(request, cancellationToken);
         return Ok(response);
     }
 }

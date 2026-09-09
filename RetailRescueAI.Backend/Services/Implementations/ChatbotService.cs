@@ -1,21 +1,22 @@
-using Microsoft.EntityFrameworkCore;
-using RetailRescueAI.Backend.Data;
 using RetailRescueAI.Backend.DTOs;
+using RetailRescueAI.Backend.Repositories.Interfaces;
+using RetailRescueAI.Backend.Services.AI;
+using RetailRescueAI.Backend.Services.Interfaces;
 
-namespace RetailRescueAI.Backend.Services.AI;
+namespace RetailRescueAI.Backend.Services.Implementations;
 
-public class ManagerChatbotService
+public class ChatbotService : IChatbotService
 {
-    private readonly AppDbContext _context;
+    private readonly IInventoryBatchRepository _batchRepository;
     private readonly ILLMService _llmService;
-    private readonly ILogger<ManagerChatbotService> _logger;
+    private readonly ILogger<ChatbotService> _logger;
 
-    public ManagerChatbotService(
-        AppDbContext context,
+    public ChatbotService(
+        IInventoryBatchRepository batchRepository,
         ILLMService llmService,
-        ILogger<ManagerChatbotService> logger)
+        ILogger<ChatbotService> logger)
     {
-        _context = context;
+        _batchRepository = batchRepository;
         _llmService = llmService;
         _logger = logger;
     }
@@ -24,11 +25,7 @@ public class ManagerChatbotService
     {
         var now = DateTime.UtcNow;
 
-        // Fetch at-risk batches context
-        var urgentBatches = await _context.InventoryBatches
-            .Include(b => b.Product)
-            .Where(b => b.RemainingQuantity > 0 && (b.Status == "CRITICAL" || b.Status == "AT_RISK"))
-            .ToListAsync(cancellationToken);
+        var urgentBatches = await _batchRepository.GetUrgentBatchesAsync(cancellationToken);
 
         var contextSummary = string.Join("\n", urgentBatches.Select(b =>
             $"- {b.Product?.Name} (ロット: {b.BatchCode}): 残り{b.RemainingQuantity}個, 定価¥{b.Product?.Price}, 賞味期限まで残り{(b.ExpiryDate - now).TotalHours:F1}時間, 状態: {b.Status}"));
@@ -47,7 +44,6 @@ public class ManagerChatbotService
         var history = request.History ?? new List<ChatMessageDto>();
         var reply = await _llmService.ChatAsync(systemPrompt, history, request.Message, cancellationToken);
 
-        // Check if message asks to propose or discount chicken bento
         PromotionProposalDto? proposal = null;
         var msgLower = request.Message.ToLower();
         var targetBatch = urgentBatches.FirstOrDefault(b => b.Product != null && (b.Product.Name.Contains("チキン") || b.Product.ProductCode.Contains("BENTO-001")));

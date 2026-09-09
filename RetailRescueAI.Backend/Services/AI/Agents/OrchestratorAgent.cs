@@ -1,12 +1,12 @@
-using Microsoft.EntityFrameworkCore;
-using RetailRescueAI.Backend.Data;
 using RetailRescueAI.Backend.Models;
+using RetailRescueAI.Backend.Repositories.Interfaces;
 
 namespace RetailRescueAI.Backend.Services.AI.Agents;
 
 public class OrchestratorAgent
 {
-    private readonly AppDbContext _context;
+    private readonly IInventoryBatchRepository _batchRepository;
+    private readonly IAiRecommendationRepository _recommendationRepository;
     private readonly ExpiryAgent _expiryAgent;
     private readonly SalesAgent _salesAgent;
     private readonly PromotionAgent _promotionAgent;
@@ -14,14 +14,16 @@ public class OrchestratorAgent
     private readonly ILogger<OrchestratorAgent> _logger;
 
     public OrchestratorAgent(
-        AppDbContext context,
+        IInventoryBatchRepository batchRepository,
+        IAiRecommendationRepository recommendationRepository,
         ExpiryAgent expiryAgent,
         SalesAgent salesAgent,
         PromotionAgent promotionAgent,
         ReviserAgent reviserAgent,
         ILogger<OrchestratorAgent> logger)
     {
-        _context = context;
+        _batchRepository = batchRepository;
+        _recommendationRepository = recommendationRepository;
         _expiryAgent = expiryAgent;
         _salesAgent = salesAgent;
         _promotionAgent = promotionAgent;
@@ -37,12 +39,8 @@ public class OrchestratorAgent
 
         var now = DateTime.UtcNow;
 
-        // 1. Fetch active inventory batches
-        var batches = await _context.InventoryBatches
-            .Include(b => b.Product)
-            .ThenInclude(p => p!.Category)
-            .Where(b => b.RemainingQuantity > 0)
-            .ToListAsync(cancellationToken);
+        // 1. Fetch active inventory batches via Repository
+        var batches = await _batchRepository.GetActiveBatchesAsync(cancellationToken);
 
         if (batches.Count == 0)
         {
@@ -60,9 +58,10 @@ public class OrchestratorAgent
             {
                 exp.Batch.Status = exp.RiskLevel;
                 exp.Batch.UpdatedAt = now;
+                _batchRepository.Update(exp.Batch);
             }
         }
-        await _context.SaveChangesAsync(cancellationToken);
+        await _batchRepository.SaveChangesAsync(cancellationToken);
 
         // 3. Sales Analysis Agent
         var salesResults = await _salesAgent.AnalyzeSalesVelocityAsync(expiryResults, now, cancellationToken);
@@ -87,8 +86,7 @@ public class OrchestratorAgent
             var p = vr.Proposal;
 
             // Check if there is already a PENDING recommendation for this batch
-            var existingPending = await _context.AIRecommendations
-                .FirstOrDefaultAsync(r => r.TargetBatchId == p.TargetBatch.Id && r.Status == "PENDING", cancellationToken);
+            var existingPending = await _recommendationRepository.GetPendingForBatchAsync(p.TargetBatch.Id, cancellationToken);
 
             if (existingPending != null)
             {
@@ -127,11 +125,11 @@ public class OrchestratorAgent
                 });
             }
 
-            _context.AIRecommendations.Add(rec);
+            await _recommendationRepository.AddAsync(rec, cancellationToken);
             createdRecommendations.Add(rec);
         }
 
-        await _context.SaveChangesAsync(cancellationToken);
+        await _recommendationRepository.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation("[OrchestratorAgent] Pipeline finished. Created {Count} PENDING recommendations.", createdRecommendations.Count);
         return createdRecommendations;

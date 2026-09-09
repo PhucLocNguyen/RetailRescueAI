@@ -1,9 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using RetailRescueAI.Backend.Data;
 using RetailRescueAI.Backend.DTOs;
 using RetailRescueAI.Backend.Models;
-using RetailRescueAI.Backend.Services;
+using RetailRescueAI.Backend.Services.Interfaces;
 
 namespace RetailRescueAI.Backend.Controllers;
 
@@ -11,45 +9,35 @@ namespace RetailRescueAI.Backend.Controllers;
 [Route("api/[controller]")]
 public class PosController : ControllerBase
 {
-    private readonly PosPromotionEngine _posPromotionEngine;
-    private readonly InventoryService _inventoryService;
-    private readonly AppDbContext _context;
+    private readonly IPosService _posService;
 
-    public PosController(
-        PosPromotionEngine posPromotionEngine,
-        InventoryService inventoryService,
-        AppDbContext context)
+    public PosController(IPosService posService)
     {
-        _posPromotionEngine = posPromotionEngine;
-        _inventoryService = inventoryService;
-        _context = context;
+        _posService = posService;
     }
 
     [HttpPost("recommendations")]
-    public async Task<ActionResult<PosRecommendationResponse>> GetRecommendations([FromBody] PosRecommendationRequest request)
+    public async Task<ActionResult<PosRecommendationResponse>> GetRecommendations(
+        [FromBody] PosRecommendationRequest request,
+        CancellationToken cancellationToken)
     {
-        // High speed recommendation under 500ms without LLM latency
-        var response = await _posPromotionEngine.GetRecommendationsForCartAsync(request);
+        var response = await _posService.GetRecommendationsForCartAsync(request, cancellationToken);
         return Ok(response);
     }
 
     [HttpPost("checkout")]
-    public async Task<ActionResult<CheckoutResponse>> Checkout([FromBody] CheckoutRequest request)
+    public async Task<ActionResult<CheckoutResponse>> Checkout(
+        [FromBody] CheckoutRequest request,
+        CancellationToken cancellationToken)
     {
-        var store = await _context.Stores.FirstOrDefaultAsync();
-        int storeId = store?.Id ?? 1;
-
-        var staff = await _context.Users.FirstOrDefaultAsync(u => u.Role == "STAFF");
-        int? staffId = staff?.Id;
-
-        var response = await _inventoryService.ProcessCheckoutAsync(staffId, storeId, request);
+        var response = await _posService.CheckoutAsync(request, cancellationToken);
         return Ok(response);
     }
 
     [HttpGet("customers")]
-    public async Task<ActionResult<List<Customer>>> GetCustomers()
+    public async Task<ActionResult<List<Customer>>> GetCustomers(CancellationToken cancellationToken)
     {
-        var customers = await _context.Customers.OrderBy(c => c.Name).ToListAsync();
+        var customers = await _posService.GetCustomersAsync(cancellationToken);
         return Ok(customers);
     }
 }

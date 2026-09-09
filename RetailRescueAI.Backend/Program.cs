@@ -3,17 +3,29 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using RetailRescueAI.Backend.Data;
-using RetailRescueAI.Backend.Services;
+using RetailRescueAI.Backend.Repositories.Implementations;
+using RetailRescueAI.Backend.Repositories.Interfaces;
 using RetailRescueAI.Backend.Services.AI;
 using RetailRescueAI.Backend.Services.AI.Agents;
 using RetailRescueAI.Backend.Services.BackgroundJobs;
+using RetailRescueAI.Backend.Services.Implementations;
+using RetailRescueAI.Backend.Services.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // 1. Database Configuration
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=retailrescue.db";
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(connectionString));
+{
+    if (connectionString.Contains(".db") || (connectionString.Contains("Data Source=") && !connectionString.Contains("Initial Catalog") && !connectionString.Contains("database.windows.net")))
+    {
+        options.UseSqlite(connectionString);
+    }
+    else
+    {
+        options.UseSqlServer(connectionString);
+    }
+});
 
 // 2. CORS Policy for Next.js Frontend
 builder.Services.AddCors(options =>
@@ -57,7 +69,28 @@ builder.Services.AddControllers()
 // 5. OpenAPI Configuration (.NET 9 Native)
 builder.Services.AddOpenApi();
 
-// 6. AI Multi-Agent & Domain Services
+// 6. Repositories Layer (Data Access)
+builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IProductRepository, ProductRepository>();
+builder.Services.AddScoped<IInventoryBatchRepository, InventoryBatchRepository>();
+builder.Services.AddScoped<IPromotionRepository, PromotionRepository>();
+builder.Services.AddScoped<ISaleRepository, SaleRepository>();
+builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
+builder.Services.AddScoped<IAiRecommendationRepository, AiRecommendationRepository>();
+builder.Services.AddScoped<IPromotionResultRepository, PromotionResultRepository>();
+
+// 7. Services Layer (Business Logic)
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IProductService, ProductService>();
+builder.Services.AddScoped<IInventoryService, InventoryService>();
+builder.Services.AddScoped<IPosService, PosService>();
+builder.Services.AddScoped<IPromotionService, PromotionService>();
+builder.Services.AddScoped<IAiRecommendationService, AiRecommendationService>();
+builder.Services.AddScoped<IChatbotService, ChatbotService>();
+builder.Services.AddScoped<IResultService, ResultService>();
+
+// 8. AI Multi-Agent Layer
 builder.Services.AddHttpClient<GeminiLLMService>();
 builder.Services.AddSingleton<MockLLMService>();
 builder.Services.AddScoped<ILLMService, GeminiLLMService>();
@@ -67,12 +100,8 @@ builder.Services.AddScoped<SalesAgent>();
 builder.Services.AddScoped<PromotionAgent>();
 builder.Services.AddScoped<ReviserAgent>();
 builder.Services.AddScoped<OrchestratorAgent>();
-builder.Services.AddScoped<ManagerChatbotService>();
 
-builder.Services.AddScoped<PosPromotionEngine>();
-builder.Services.AddScoped<InventoryService>();
-
-// 7. Background Worker (IHostedService every 3 hours)
+// 9. Background Worker (IHostedService every 3 hours)
 builder.Services.AddHostedService<ExpiryAiScheduledWorker>();
 
 var app = builder.Build();
@@ -105,6 +134,7 @@ app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();
 
+app.MapGet("/api/health", () => Results.Ok(new { status = "healthy", time = DateTime.UtcNow }));
 app.MapControllers();
 
 app.Run();
