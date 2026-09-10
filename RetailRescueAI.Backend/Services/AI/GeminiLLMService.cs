@@ -44,7 +44,7 @@ public class GeminiLLMService : ILLMService
         try
         {
             var apiKey = _configuration["Gemini:ApiKey"];
-            var model = _configuration["Gemini:Model"] ?? "gemini-1.5-flash";
+            var model = _configuration["Gemini:Model"] ?? "gemini-2.5-flash";
             var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
 
             var requestPayload = new
@@ -64,13 +64,15 @@ public class GeminiLLMService : ILLMService
             };
 
             var json = JsonSerializer.Serialize(requestPayload);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+            request.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
 
-            var response = await _httpClient.PostAsync(url, content, cancellationToken);
+            var response = await _httpClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 var err = await response.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogWarning("Gemini API call failed with status {Status}: {Error}. Falling back to Mock.", response.StatusCode, err);
+                _logger.LogWarning("Gemini GenerateText API call failed with status {Status}: {Error}. Falling back to Mock.", response.StatusCode, err);
                 return await _fallbackMockService.GenerateTextAsync(systemPrompt, userPrompt, cancellationToken);
             }
 
@@ -102,7 +104,7 @@ public class GeminiLLMService : ILLMService
         try
         {
             var apiKey = _configuration["Gemini:ApiKey"];
-            var model = _configuration["Gemini:Model"] ?? "gemini-1.5-flash";
+            var model = _configuration["Gemini:Model"] ?? "gemini-2.5-flash";
             var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
 
             var contents = new List<object>();
@@ -134,11 +136,15 @@ public class GeminiLLMService : ILLMService
             };
 
             var json = JsonSerializer.Serialize(requestPayload);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+            request.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
 
-            var response = await _httpClient.PostAsync(url, content, cancellationToken);
+            var response = await _httpClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
+                var err = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogWarning("Gemini Chat API call failed with status {Status}: {Error}. Falling back to Mock.", response.StatusCode, err);
                 return await _fallbackMockService.ChatAsync(systemPrompt, history, userMessage, cancellationToken);
             }
 

@@ -47,6 +47,11 @@ export interface PosRecommendationItem {
   finalPrice: number;
   message: string;
   actionPrompt: string;
+  comboProductId?: number;
+  comboProductName?: string;
+  comboPrice?: number;
+  savingsAmount?: number;
+  staffScript?: string;
 }
 
 export interface InventoryBatch {
@@ -94,6 +99,9 @@ export interface AIRecommendation {
   recommendedAction: string;
   recommendedDiscountPercent?: number;
   recommendedComboPrice?: number;
+  comboProductId?: number;
+  comboProductName?: string;
+  recommendedComboSavings?: number;
   startTime: string;
   endTime: string;
   expectedSales: number;
@@ -208,11 +216,15 @@ export interface AiPipelineRunResponse {
   steps: AiAgentTraceStep[];
 }
 
-export async function approveAIRecommendation(id: number, customDiscountPercent?: number): Promise<any> {
+export async function approveAIRecommendation(
+  id: number,
+  customDiscountPercent?: number,
+  customComboPrice?: number
+): Promise<any> {
   const res = await fetch(`${API_BASE_URL}/ai/recommendations/${id}/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ customDiscountPercent })
+    body: JSON.stringify({ customDiscountPercent, customComboPrice })
   });
   if (!res.ok) throw new Error('AI提案の承認に失敗しました。');
   return res.json();
@@ -240,6 +252,26 @@ export async function fetchPromotions(status?: string): Promise<Promotion[]> {
   const url = status ? `${API_BASE_URL}/promotions?status=${status}` : `${API_BASE_URL}/promotions`;
   const res = await fetch(url);
   if (!res.ok) throw new Error('プロモーション一覧の取得に失敗しました。');
+  return res.json();
+}
+
+export async function createPromotion(payload: {
+  name: string;
+  promotionType: string;
+  targetProductId: number;
+  targetBatchId?: number;
+  discountPercent?: number;
+  comboPrice?: number;
+  startTime: string;
+  endTime: string;
+  reasoning?: string;
+}): Promise<Promotion> {
+  const res = await fetch(`${API_BASE_URL}/promotions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) throw new Error('プロモーションの作成に失敗しました。');
   return res.json();
 }
 
@@ -295,10 +327,35 @@ export async function fetchPosRecommendations(
   return data.recommendations || [];
 }
 
+export interface PosScanResult {
+  success: boolean;
+  message: string;
+  productId?: number;
+  productName?: string;
+  barcode?: string;
+  batchId?: number;
+  batchCode?: string;
+  remainingQuantity?: number;
+  price: number;
+  isDiscounted: boolean;
+  discountPercent?: number;
+  finalPrice?: number;
+  promotionId?: number;
+  promotionName?: string;
+  isExpired: boolean;
+}
+
 export async function processPosCheckout(payload: {
   customerId?: number;
   paymentMethod: string;
-  items: { productId: number; batchId: number; quantity: number; appliedPromotionId?: number }[];
+  items: {
+    productId: number;
+    batchId: number;
+    quantity: number;
+    appliedPromotionId?: number;
+    scannedBarcode?: string;
+    batchCode?: string;
+  }[];
   receivedAmount: number;
 }): Promise<any> {
   const res = await fetch(`${API_BASE_URL}/pos/checkout`, {
@@ -311,6 +368,12 @@ export async function processPosCheckout(payload: {
     throw new Error(data.message || 'チェックアウト処理に失敗しました。');
   }
   return data;
+}
+
+export async function scanBarcodeApi(barcode: string): Promise<PosScanResult> {
+  const res = await fetch(`${API_BASE_URL}/pos/scan?barcode=${encodeURIComponent(barcode)}`);
+  if (!res.ok) throw new Error('バーコードの解析に失敗しました。');
+  return res.json();
 }
 
 export async function sendChatMessage(message: string, history: any[]): Promise<any> {

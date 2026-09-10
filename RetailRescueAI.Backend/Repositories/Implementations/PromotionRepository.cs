@@ -16,6 +16,7 @@ public class PromotionRepository : Repository<Promotion>, IPromotionRepository
         var q = _dbSet
             .Include(p => p.TargetProduct)
             .Include(p => p.TargetBatch)
+            .Include(p => p.ComboProduct)
             .AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(status))
@@ -30,6 +31,8 @@ public class PromotionRepository : Repository<Promotion>, IPromotionRepository
     {
         return await _dbSet
             .Include(p => p.TargetProduct)
+            .Include(p => p.TargetBatch)
+            .Include(p => p.ComboProduct)
             .Include(p => p.Conditions)
             .Where(p => p.Status == "APPROVED" && p.StartTime <= now && p.EndTime >= now)
             .ToListAsync(cancellationToken);
@@ -40,6 +43,7 @@ public class PromotionRepository : Repository<Promotion>, IPromotionRepository
         return await _dbSet
             .Include(p => p.TargetProduct)
             .Include(p => p.TargetBatch)
+            .Include(p => p.ComboProduct)
             .Include(p => p.Conditions)
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
     }

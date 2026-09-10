@@ -56,9 +56,9 @@ public class OrchestratorAgent
             return (new List<AIRecommendation>(), steps);
         }
 
-        // 2. Expiry Agent
+        // 2. Expiry Agent (Semantic Kernel)
         var sw1 = System.Diagnostics.Stopwatch.StartNew();
-        var expiryResults = _expiryAgent.AnalyzeBatches(batches, now);
+        var expiryResults = await _expiryAgent.AnalyzeBatchesAsync(batches, now, cancellationToken);
 
         foreach (var exp in expiryResults)
         {
@@ -74,7 +74,7 @@ public class OrchestratorAgent
 
         var expiryDetails = new List<string>
         {
-            $"全店舗スキャン対象: {batches.Count} 件の有効ロット在庫"
+            $"全店舗スキャン対象: {batches.Count} 件の有効ロット在庫 (InventoryDataPlugin)"
         };
         foreach (var exp in expiryResults)
         {
@@ -84,15 +84,15 @@ public class OrchestratorAgent
 
         steps.Add(new AiAgentTraceStepDto(
             AgentKey: "ExpiryAgent",
-            AgentName: "賞味期限リスク監視エージェント",
-            RoleTitle: "Expiry Risk Monitoring Agent",
+            AgentName: "賞味期限リスク監視エージェント (Semantic Kernel)",
+            RoleTitle: "Expiry Risk Monitoring Agent (SK Plugin)",
             Description: "全ロットの賞味期限と残存時間をリアルタイムにスキャンし、即時対応が必要な在庫を特定",
             Details: expiryDetails,
             Status: "COMPLETED",
             DurationMs: (int)sw1.ElapsedMilliseconds
         ));
 
-        // 3. Sales Analysis Agent
+        // 3. Sales Analysis Agent (Semantic Kernel)
         var sw2 = System.Diagnostics.Stopwatch.StartNew();
         var salesResults = await _salesAgent.AnalyzeSalesVelocityAsync(expiryResults, now, cancellationToken);
         sw2.Stop();
@@ -105,22 +105,22 @@ public class OrchestratorAgent
 
         steps.Add(new AiAgentTraceStepDto(
             AgentKey: "SalesAgent",
-            AgentName: "販売速度・廃棄予測エージェント",
-            RoleTitle: "Sales Velocity & Waste Forecaster",
+            AgentName: "販売速度・廃棄予測エージェント (Semantic Kernel)",
+            RoleTitle: "Sales Velocity & Waste Forecaster (SK Plugin)",
             Description: "過去7日間のPOS販売実績から日販ペースを算出し、期限切れまでの自然消化予測と潜在的損失を試算",
             Details: salesDetails,
             Status: "COMPLETED",
             DurationMs: (int)sw2.ElapsedMilliseconds
         ));
 
-        // 4. Promotion Agent
+        // 4. Promotion Agent (Semantic Kernel & Gemini)
         var sw3 = System.Diagnostics.Stopwatch.StartNew();
         var proposals = await _promotionAgent.GenerateProposalsAsync(salesResults, now, cancellationToken);
         sw3.Stop();
 
         var promoDetails = new List<string>
         {
-            "LLMエンジン: Google Gemini 2.5 Flash（または高速フォールバック）による最適販促施策立案"
+            "LLMエンジン: Google Gemini 2.5 Flash / Semantic Kernel ComboStrategyPlugin による最適施策立案"
         };
         foreach (var p in proposals)
         {
@@ -129,15 +129,15 @@ public class OrchestratorAgent
 
         steps.Add(new AiAgentTraceStepDto(
             AgentKey: "PromotionAgent",
-            AgentName: "販促プロモーション立案エージェント",
-            RoleTitle: "Smart Promotion Strategy Agent (Gemini)",
+            AgentName: "販促プロモーション立案エージェント (Semantic Kernel)",
+            RoleTitle: "Smart Promotion Strategy Agent (SK & Gemini)",
             Description: "商品特性とピーク時間帯（夕方17:00〜22:00等）を踏まえ、最適な割引率と論理的な推奨理由を自動生成",
             Details: promoDetails,
             Status: "COMPLETED",
             DurationMs: (int)sw3.ElapsedMilliseconds
         ));
 
-        // 5. Reviser Agent
+        // 5. Reviser Agent (Semantic Kernel Safety Guardrails)
         var sw4 = System.Diagnostics.Stopwatch.StartNew();
         var validatedResults = _reviserAgent.ValidateProposals(proposals);
         sw4.Stop();
@@ -157,8 +157,8 @@ public class OrchestratorAgent
 
         steps.Add(new AiAgentTraceStepDto(
             AgentKey: "ReviserAgent",
-            AgentName: "安全制約検証エージェント",
-            RoleTitle: "Retail Safety & Guardrails Agent",
+            AgentName: "安全制約検証エージェント (Semantic Kernel)",
+            RoleTitle: "Retail Safety & Guardrails Agent (SK Plugin)",
             Description: "リテール規約 BR-003（賞味期限内）、BR-006（実在庫）、粗利率15%以上の厳格チェックを実施し提案を保護",
             Details: reviserDetails,
             Status: "COMPLETED",
@@ -179,16 +179,17 @@ public class OrchestratorAgent
 
             var p = vr.Proposal;
 
-            // Check if there is already a PENDING recommendation for this batch
-            var existingPending = await _recommendationRepository.GetPendingForBatchAsync(p.TargetBatch.Id, cancellationToken);
+            // Check if there is already a PENDING recommendation for this batch and promotion type
+            var existingPending = await _recommendationRepository.GetPendingForBatchAsync(p.TargetBatch.Id, p.PromotionType, cancellationToken);
 
             if (existingPending != null)
             {
-                _logger.LogInformation("[OrchestratorAgent] Recommendation already pending for batch {BatchCode}.", p.TargetBatch.BatchCode);
+                _logger.LogInformation("[OrchestratorAgent] Recommendation ({Type}) already pending for batch {BatchCode}.", p.PromotionType, p.TargetBatch.BatchCode);
                 continue;
             }
 
-            var recCode = $"REC-{DateTime.UtcNow:yyyyMMddHHmmss}-{p.TargetBatch.Id}";
+            var typeSuffix = p.PromotionType == "BUNDLE_COMBO" ? "COMBO" : "DISC";
+            var recCode = $"REC-{DateTime.UtcNow:yyyyMMddHHmmss}-{p.TargetBatch.Id}-{typeSuffix}";
             var rec = new AIRecommendation
             {
                 RecommendationCode = recCode,
@@ -199,6 +200,9 @@ public class OrchestratorAgent
                 RecommendedAction = p.ActionTitle,
                 RecommendedDiscountPercent = p.DiscountPercent,
                 RecommendedComboPrice = p.ComboPrice,
+                ComboProductId = p.ComboProduct?.Id,
+                ComboProductName = p.ComboProduct?.Name,
+                RecommendedComboSavings = p.ComboSavings,
                 StartTime = p.StartTime,
                 EndTime = p.EndTime,
                 ExpectedSales = p.ExpectedSales,

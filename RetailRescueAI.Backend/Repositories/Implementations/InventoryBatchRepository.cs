@@ -46,5 +46,12 @@ public class InventoryBatchRepository : Repository<InventoryBatch>, IInventoryBa
             .OrderBy(b => b.ExpiryDate)
             .ToListAsync(cancellationToken);
     }
+
+    public async Task<InventoryBatch?> GetByBatchCodeAsync(string batchCode, CancellationToken cancellationToken = default)
+    {
+        return await _dbSet
+            .Include(b => b.Product)
+            .FirstOrDefaultAsync(b => b.BatchCode == batchCode, cancellationToken);
+    }
 }
 

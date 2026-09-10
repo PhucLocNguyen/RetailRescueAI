@@ -42,7 +42,10 @@ public class PromotionService : IPromotionService
             p.ApprovedBy,
             p.ApprovedAt,
             p.AiReasoning,
-            p.CreatedAt
+            p.CreatedAt,
+            p.ComboProductId,
+            p.ComboProduct?.Name,
+            p.ComboDiscountAmount
         )).ToList();
     }
 
@@ -94,13 +97,16 @@ public class PromotionService : IPromotionService
             target.ApprovedBy,
             target.ApprovedAt,
             target.AiReasoning,
-            target.CreatedAt
+            target.CreatedAt,
+            target.ComboProductId,
+            target.ComboProduct?.Name,
+            target.ComboDiscountAmount
         );
     }
 
     public async Task<bool> ApprovePromotionAsync(int id, CancellationToken cancellationToken = default)
     {
-        var promo = await _promotionRepository.GetByIdAsync(id, cancellationToken);
+        var promo = await _promotionRepository.GetPromotionWithDetailsAsync(id, cancellationToken);
         if (promo == null) return false;
 
         promo.Status = "APPROVED";

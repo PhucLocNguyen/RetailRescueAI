@@ -51,7 +51,10 @@ public class AiRecommendationService : IAiRecommendationService
             r.Reason,
             r.Status,
             r.CreatedAt,
-            r.Evidences.Select(e => new AIEvidenceDto(e.EvidenceKey, e.EvidenceValue, e.Description)).ToList()
+            r.Evidences.Select(e => new AIEvidenceDto(e.EvidenceKey, e.EvidenceValue, e.Description)).ToList(),
+            r.ComboProductId,
+            r.ComboProductName ?? r.ComboProduct?.Name,
+            r.RecommendedComboSavings
         )).ToList();
     }
 
@@ -68,15 +71,31 @@ public class AiRecommendationService : IAiRecommendationService
         rec.ReviewedAt = now;
         rec.ReviewedBy = "佐藤 店長 (Manager)";
 
-        // Support Manager adjusting discount %
+        bool isCombo = rec.RecommendationType == "BUNDLE_COMBO";
+
+        // Support Manager adjusting discount % or combo price
         decimal finalDiscount = (request?.CustomDiscountPercent.HasValue == true && request.CustomDiscountPercent.Value > 0)
             ? request.CustomDiscountPercent.Value
             : (rec.RecommendedDiscountPercent ?? 20m);
 
-        rec.RecommendedDiscountPercent = finalDiscount;
-        if (request?.CustomDiscountPercent.HasValue == true)
+        decimal? finalComboPrice = request?.CustomComboPrice ?? rec.RecommendedComboPrice;
+        decimal? finalComboSavings = rec.RecommendedComboSavings;
+
+        if (isCombo)
         {
-            rec.RecommendedAction = $"{rec.TargetProduct?.Name ?? "対象商品"} {finalDiscount:F0}% OFF（店長指定割）";
+            rec.RecommendedComboPrice = finalComboPrice;
+            if (request?.CustomComboPrice.HasValue == true)
+            {
+                rec.RecommendedAction = $"【ランチコンボ】たまごサンド＋宇治緑茶 セットで ¥{finalComboPrice:N0}（店長指定）";
+            }
+        }
+        else
+        {
+            rec.RecommendedDiscountPercent = finalDiscount;
+            if (request?.CustomDiscountPercent.HasValue == true)
+            {
+                rec.RecommendedAction = $"{rec.TargetProduct?.Name ?? "対象商品"} {finalDiscount:F0}% OFF（店長指定割）";
+            }
         }
 
         var promo = new Promotion
@@ -87,8 +106,10 @@ public class AiRecommendationService : IAiRecommendationService
             Status = "APPROVED",
             TargetProductId = rec.TargetProductId,
             TargetBatchId = rec.TargetBatchId,
-            DiscountPercent = finalDiscount,
-            ComboPrice = rec.RecommendedComboPrice,
+            DiscountPercent = isCombo ? null : finalDiscount,
+            ComboProductId = rec.ComboProductId,
+            ComboPrice = finalComboPrice,
+            ComboDiscountAmount = finalComboSavings,
             StartTime = rec.StartTime,
             EndTime = rec.EndTime,
             CreatedVia = "AI_AGENT",
@@ -110,24 +131,32 @@ public class AiRecommendationService : IAiRecommendationService
         // Broadcast Real-time event to POS screens via SignalR
         try
         {
+            string broadcastMessage = isCombo
+                ? $"🍱 【ランチコンボ承認】{rec.TargetProduct?.Name}＋{rec.ComboProductName ?? "ドリンク"} セットで ¥{finalComboPrice:N0}（¥{finalComboSavings:N0}引き）が承認されました！"
+                : $"🏷️ 【値引き承認】{rec.TargetProduct?.Name} (ロット: {rec.TargetBatch?.BatchCode ?? promo.TargetBatchId.ToString()}) が {promo.DiscountPercent:F0}% OFF に承認されました！";
+
             await _hubContext.Clients.All.SendAsync("PromotionApproved", new
             {
                 promotionId = promo.Id,
                 promotionCode = promo.PromotionCode,
                 promotionName = promo.Name,
+                promotionType = promo.PromotionType,
                 targetProductId = promo.TargetProductId,
                 targetProductName = rec.TargetProduct?.Name,
                 targetBatchId = promo.TargetBatchId,
                 targetBatchCode = rec.TargetBatch?.BatchCode,
                 discountPercent = promo.DiscountPercent,
+                comboProductId = promo.ComboProductId,
+                comboProductName = rec.ComboProductName ?? rec.ComboProduct?.Name,
+                comboPrice = promo.ComboPrice,
+                comboSavings = promo.ComboDiscountAmount,
                 startTime = promo.StartTime,
                 endTime = promo.EndTime,
-                message = $"【値引き承認】{rec.TargetProduct?.Name} (ロット: {rec.TargetBatch?.BatchCode ?? promo.TargetBatchId.ToString()}) が {promo.DiscountPercent:F0}% OFF に承認されました！"
+                message = broadcastMessage
             }, cancellationToken);
         }
         catch (Exception ex)
         {
-            // Log SignalR broadcast error but don't fail promotion approval
             System.Console.WriteLine($"[SignalR] Broadcast error: {ex.Message}");
         }
 

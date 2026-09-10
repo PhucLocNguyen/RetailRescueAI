@@ -49,42 +49,156 @@ public class MockLLMService : ILLMService
 
     public Task<string> ChatAsync(string systemPrompt, List<ChatMessageDto> history, string userMessage, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("[MockLLMService] Answering manager chat in Japanese...");
+        _logger.LogInformation("[MockLLMService] Answering manager chat in Japanese dynamically...");
 
         var msg = userMessage.ToLower();
 
-        if (msg.Contains("チキン") || msg.Contains("弁当") || msg.Contains("bento"))
+        // Extract discount percent requested by user if present (e.g., 30%, 25%, 3割)
+        decimal discount = 20m;
+        var match = Regex.Match(userMessage, @"(\d{1,2})\s*(?:%|％)");
+        if (match.Success && decimal.TryParse(match.Groups[1].Value, out var parsedPct))
         {
-            return Task.FromResult(@"チキン南蛮弁当（BATCH-BENTO-001）の在庫状況を確認しました。
+            discount = Math.Clamp(parsedPct, 5, 70);
+        }
+        else if (userMessage.Contains("3割") || userMessage.Contains("30"))
+        {
+            discount = 30m;
+        }
+        else if (userMessage.Contains("半額") || userMessage.Contains("50"))
+        {
+            discount = 50m;
+        }
 
-現在庫：**30個**
-賞味期限まで：**残り約18時間**
-定価：¥550（原価：¥320）
+        if (msg.Contains("サンド") || msg.Contains("たまご") || msg.Contains("sand") || msg.Contains("egg"))
+        {
+            decimal price = 280m;
+            decimal discounted = Math.Round(price * (1 - discount / 100m), 0);
+            return Task.FromResult($@"こだわりたまごサンド（ロット: BATCH-SAND-001）の在庫状況を確認しました。
 
-通常の販売ペース（平均12個/日）のままだと、約21個が売れ残り廃棄になるリスク（CRITICAL）があります。
+現在庫：**12個**
+賞味期限まで：**残り約6時間（CRITICAL - 切迫）**
+定価：¥{price:N0}（原価：¥150）
+
+日販平均ペースでは期限内に完売せず、約10個が廃棄となる危険があります。
 
 **【AIの提案】**
-本日 **17:00 〜 22:00** の夕方ピーク帯に **20% OFF（割引後 ¥440）** のプロモーションを実施することを推奨します。
-20%引き後でも粗利益¥120（粗利率27%）が確保され、最低利益率基準（15%）をクリアしています。
+本日 **17:00 〜 22:00** に **{discount:F0}% OFF（割引後 ¥{discounted:N0}）** の直前割プロモーションを推奨します。
+値引き後でも粗利益 ¥{discounted - 150:N0}（粗利率 {((discounted - 150) / discounted * 100):F1}%）を確保し、最低粗利率基準（15%）を十分に維持できます。
 
-このプロモーションを「承認待ち（PENDING）」として登録しますか？");
+以下のプランを「承認待ち（PENDING）」として登録しますか？
+
+```json:proposal
+{{
+  ""batchCode"": ""BATCH-SAND-001"",
+  ""promotionType"": ""DIRECT_DISCOUNT"",
+  ""discountPercent"": {discount:F0},
+  ""name"": ""こだわりたまごサンド 夕方直前割 {discount:F0}% OFF"",
+  ""reasoning"": ""残り12個（期限まで6h）の廃棄回避のため、{discount:F0}%割引（¥{discounted:N0}）で早期完売を促します。""
+}}
+```");
         }
 
-        if (msg.Contains("サラダ") || msg.Contains("salad"))
+        if (msg.Contains("かつ丼") || msg.Contains("ロース") || msg.Contains("pork") || msg.Contains("cutlet"))
         {
-            return Task.FromResult(@"彩りサーモンサラダ（BATCH-SALAD-001）は現在庫25個、賞味期限まで残り26時間です。
-チキン南蛮弁当との併売（Buy Bento, Get Salad 20% OFF）を実施することで、客単価アップとサラダの早期完売が期待できます。");
+            decimal price = 620m;
+            decimal discounted = Math.Round(price * (1 - discount / 100m), 0);
+            return Task.FromResult($@"特選 ロースかつ丼（ロット: BATCH-BENTO-003）の在庫状況を確認しました。
+
+現在庫：**18個**
+賞味期限まで：**残り約14時間（AT_RISK）**
+定価：¥{price:N0}（原価：¥380）
+
+**【AIの提案】**
+夕方ピーク帯（17:00〜22:00）に **{discount:F0}% OFF（割引後 ¥{discounted:N0}）** のプロモーションを推奨します。
+値引き後でも粗利益 ¥{discounted - 380:N0} を維持し、安全基準を満たしています。
+
+```json:proposal
+{{
+  ""batchCode"": ""BATCH-BENTO-003"",
+  ""promotionType"": ""DIRECT_DISCOUNT"",
+  ""discountPercent"": {discount:F0},
+  ""name"": ""特選 ロースかつ丼 夕方割 {discount:F0}% OFF"",
+  ""reasoning"": ""残り18個の消化促進のため、夕方ピークに{discount:F0}%割引（¥{discounted:N0}）を推奨。""
+}}
+```");
         }
 
-        if (msg.Contains("承認") || msg.Contains("作成") || msg.Contains("お願い") || msg.Contains("はい") || msg.Contains("登録"))
+        if (msg.Contains("サラダ") || msg.Contains("サーモン") || msg.Contains("salad"))
         {
-            return Task.FromResult(@"承知いたしました。対象のプロモーション提案を「承認待ち（PENDING）」として作成しました。
-マネージャーポータルの「AI Recommendations」または「Promotions」画面にて最終確認・承認を行ってください。");
+            decimal price = 240m;
+            decimal discounted = Math.Round(price * (1 - discount / 100m), 0);
+            return Task.FromResult($@"彩りサーモンサラダ（ロット: BATCH-SALAD-001）の在庫状況を確認しました。
+
+現在庫：**25個**
+賞味期限まで：**残り約26時間（MEDIUM）**
+定価：¥{price:N0}（原価：¥130）
+
+**【AIの提案】**
+ランチおよび夕方ピークに向け、**{discount:F0}% OFF（割引後 ¥{discounted:N0}）** または弁当とのセット販売を推奨します。
+
+```json:proposal
+{{
+  ""batchCode"": ""BATCH-SALAD-001"",
+  ""promotionType"": ""DIRECT_DISCOUNT"",
+  ""discountPercent"": {discount:F0},
+  ""name"": ""彩りサーモンサラダ タイムセール {discount:F0}% OFF"",
+  ""reasoning"": ""現在庫25個の消化を早めるため、{discount:F0}%割引（¥{discounted:N0}）を提案。""
+}}
+```");
+        }
+
+        if (msg.Contains("チキン") || msg.Contains("弁当") || msg.Contains("bento"))
+        {
+            decimal price = 550m;
+            decimal discounted = Math.Round(price * (1 - discount / 100m), 0);
+            return Task.FromResult($@"チキン南蛮弁当（ロット: BATCH-BENTO-001）の在庫状況を確認しました。
+
+現在庫：**30個**
+賞味期限まで：**残り約18時間（AT_RISK）**
+定価：¥{price:N0}（原価：¥320）
+
+通常の販売ペース（平均12個/日）のままだと、約21個が売れ残り廃棄になるリスクがあります。
+
+**【AIの提案】**
+本日 **17:00 〜 22:00** の夕方ピーク帯に **{discount:F0}% OFF（割引後 ¥{discounted:N0}）** のプロモーションを推奨します。
+粗利益¥{discounted - 320:N0}（粗利率 {((discounted - 320) / discounted * 100):F1}%）が確保され、最低利益率基準（15%）をクリアしています。
+
+```json:proposal
+{{
+  ""batchCode"": ""BATCH-BENTO-001"",
+  ""promotionType"": ""DIRECT_DISCOUNT"",
+  ""discountPercent"": {discount:F0},
+  ""name"": ""チキン南蛮弁当 夕方直前割 {discount:F0}% OFF"",
+  ""reasoning"": ""残り30個の早期完売に向け、17:00〜22:00の夕方ピーク帯に{discount:F0}%OFF（¥{discounted:N0}）のプロモーションを推奨します。""
+}}
+```");
+        }
+
+        if (msg.Contains("割引") || msg.Contains("プロモーション") || msg.Contains("提案") || msg.Contains("危険") || msg.Contains("切迫") || msg.Contains("賞味期限"))
+        {
+            return Task.FromResult($@"店長、本日の危険在庫（CRITICAL / AT_RISK）の状況です：
+
+1. 🔴 **こだわりたまごサンド（BATCH-SAND-001）**：残12個、賞味期限まで残り約6時間（最優先対策）
+2. 🟠 **特選 ロースかつ丼（BATCH-BENTO-003）**：残18個、賞味期限まで残り約14時間
+3. 🟠 **チキン南蛮弁当（BATCH-BENTO-001）**：残30個、賞味期限まで残り約18時間
+
+最切迫商品のたまごサンド（BATCH-SAND-001）について、夕方ピーク30%OFFの直前割プロモーションを提案いたします。
+
+```json:proposal
+{{
+  ""batchCode"": ""BATCH-SAND-001"",
+  ""promotionType"": ""DIRECT_DISCOUNT"",
+  ""discountPercent"": 30,
+  ""name"": ""こだわりたまごサンド 夕方直前割 30% OFF"",
+  ""reasoning"": ""賞味期限まで残り6時間の最切迫ロット（12個）を夕方ピークに集中完売させるため、30%OFFを推奨。""
+}}
+```");
         }
 
         return Task.FromResult(@"店長、お疲れ様です。RetailRescue AI アシスタントです。
 現在庫データと販売予測をもとに、賞味期限切れ間近商品の廃棄防止プロモーションをご提案できます。
-例：「チキン弁当の在庫と割引を相談したい」「現在の危険な商品は？」などとお気軽にお声がけください。");
+
+例：「たまごサンドを30%引きにしたい」「チキン弁当の割引を相談したい」「本日の危険な商品はどれ？」などとお気軽にお声がけください。");
     }
 }
 

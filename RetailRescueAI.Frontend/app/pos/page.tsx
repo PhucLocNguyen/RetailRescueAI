@@ -13,6 +13,7 @@ import {
   fetchCustomers,
   fetchPosRecommendations,
   processPosCheckout,
+  scanBarcodeApi,
 } from '@/lib/api';
 import {
   Search,
@@ -39,6 +40,7 @@ interface CartItem {
   batch: PosBatchSummary;
   quantity: number;
   appliedPromotion?: PosRecommendationItem;
+  scannedBarcode?: string;
 }
 
 export default function PosPage() {
@@ -50,6 +52,13 @@ export default function PosPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [recommendations, setRecommendations] = useState<PosRecommendationItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Barcode Scanning Toast Feedback
+  const [scanAlert, setScanAlert] = useState<{
+    type: 'success' | 'error' | 'warning';
+    title: string;
+    message: string;
+  } | null>(null);
 
   // SignalR Real-time Promotion State
   const [isSignalRConnected, setIsSignalRConnected] = useState(false);
@@ -109,14 +118,20 @@ export default function PosPage() {
       promotionId: number;
       promotionCode: string;
       promotionName: string;
+      promotionType?: string;
       targetProductId?: number;
       targetProductName?: string;
       targetBatchId?: number;
       targetBatchCode?: string;
       discountPercent?: number;
+      comboProductId?: number;
+      comboProductName?: string;
+      comboPrice?: number;
+      comboSavings?: number;
       message: string;
     }) => {
       console.log('[SignalR] Received PromotionApproved event:', data);
+      const isCombo = data.promotionType === 'BUNDLE_COMBO';
       const discountRate = data.discountPercent ?? 20;
       const prodName = data.targetProductName || '対象商品';
       const batchCodeStr = data.targetBatchCode ? ` [ロット: ${data.targetBatchCode}]` : '';
@@ -124,9 +139,11 @@ export default function PosPage() {
       // 1. Show dynamic notification banner
       setRealtimeNotification({
         id: data.promotionId,
-        message: data.message || `【新着値引き】${prodName}${batchCodeStr} が ${discountRate}% OFF に承認されました！`,
-        discountPercent: discountRate,
-        productName: `${prodName}${batchCodeStr}`,
+        message: data.message || (isCombo
+          ? `🍱 【新着コンボ】${prodName}＋${data.comboProductName ?? 'ドリンク'} セットが ¥${data.comboPrice} に承認されました！`
+          : `【新着値引き】${prodName}${batchCodeStr} が ${discountRate}% OFF に承認されました！`),
+        discountPercent: isCombo ? Math.round((data.comboSavings ?? 70) / 420 * 100) : discountRate,
+        productName: isCombo ? `${prodName}＋${data.comboProductName ?? 'ドリンク'}` : `${prodName}${batchCodeStr}`,
       });
 
       // Dismiss notification banner automatically after 9 seconds
@@ -235,38 +252,71 @@ export default function PosPage() {
       .catch((err) => console.error('Failed to load POS recommendations', err));
   }, [cart.map((i) => `${i.product.id}-${i.batch.id}-${i.quantity}`).join(','), selectedCustomerId]);
 
-  function addToCart(product: PosProduct, specificBatch?: PosBatchSummary) {
+  function addToCart(product: PosProduct, specificBatch?: PosBatchSummary, scannedBarcode?: string) {
     const validBatches = (product.batches || []).filter((b) => !b.isExpired && b.remainingQuantity > 0);
 
     if (validBatches.length === 0 && !specificBatch) {
-      alert(`「${product.name}」は有効な在庫がありません（完売または賞味期限切れ）。`);
+      setScanAlert({
+        type: 'error',
+        title: '在庫切れ・販売不可',
+        message: `「${product.name}」は有効なロット在庫がありません（完売または賞味期限切れ）。`,
+      });
+      setTimeout(() => setScanAlert(null), 4500);
       return;
     }
 
     const targetBatch = specificBatch || validBatches[0];
     if (!targetBatch) {
-      alert(`「${product.name}」の選択可能なロットがありません。`);
+      setScanAlert({
+        type: 'error',
+        title: 'ロット未検出',
+        message: `「${product.name}」の選択可能なロットがありません。`,
+      });
+      setTimeout(() => setScanAlert(null), 4500);
       return;
     }
 
     // RULE 7: Expired items CANNOT be sold! (賞味期限切れ販売禁止)
     if (targetBatch.isExpired) {
-      alert(`⛔ 【販売不可】ロット「${targetBatch.batchCode}」は賞味期限が切れています！\n店頭から直ちに撤去してください（Rule 7: 期限切れ販売禁止）。`);
+      setScanAlert({
+        type: 'error',
+        title: '⛔ 【販売不可】賞味期限切れ',
+        message: `ロット「${targetBatch.batchCode}」は賞味期限が切れています！店頭から直ちに撤去してください（Rule 7: 期限切れ販売禁止）。`,
+      });
+      setTimeout(() => setScanAlert(null), 5000);
       return;
     }
 
     if (targetBatch.remainingQuantity <= 0) {
-      alert(`ロット「${targetBatch.batchCode}」は在庫切れです。`);
+      setScanAlert({
+        type: 'error',
+        title: 'ロット完売',
+        message: `ロット「${targetBatch.batchCode}」は在庫切れです。`,
+      });
+      setTimeout(() => setScanAlert(null), 4500);
       return;
     }
+
+    const resolvedBarcode = scannedBarcode || product.barcode || targetBatch.batchCode;
 
     setCart((prev) => {
       const existing = prev.find((i) => i.product.id === product.id && i.batch.id === targetBatch.id);
       if (existing) {
         if (existing.quantity >= targetBatch.remainingQuantity) {
-          alert(`ロット「${targetBatch.batchCode}」の在庫上限 (${targetBatch.remainingQuantity}個) を超えて追加することはできません。`);
+          setScanAlert({
+            type: 'warning',
+            title: 'ロット在庫上限',
+            message: `ロット「${targetBatch.batchCode}」の在庫上限 (${targetBatch.remainingQuantity}個) を超えて追加することはできません。`,
+          });
+          setTimeout(() => setScanAlert(null), 4500);
           return prev;
         }
+        setScanAlert({
+          type: 'success',
+          title: '数量追加',
+          message: `「${product.name}」(ロット: ${targetBatch.batchCode}) を1点追加しました (計: ${existing.quantity + 1}点)。決済時にロット在庫から引落。`,
+        });
+        setTimeout(() => setScanAlert(null), 4500);
         return prev.map((i) =>
           i.product.id === product.id && i.batch.id === targetBatch.id ? { ...i, quantity: i.quantity + 1 } : i
         );
@@ -293,7 +343,23 @@ export default function PosPage() {
         };
       }
 
-      return [...prev, { product, batch: targetBatch, quantity: 1, appliedPromotion: defaultPromo }];
+      setScanAlert({
+        type: 'success',
+        title: '✅ バーコード読取・ロット確定',
+        message: `「${product.name}」(ロット: ${targetBatch.batchCode}${defaultPromo ? ` • ${defaultPromo.discountPercent}% OFF` : ''}) をカゴに追加しました。決済時にロット在庫から直接引き落とされます。`,
+      });
+      setTimeout(() => setScanAlert(null), 4500);
+
+      return [
+        ...prev,
+        {
+          product,
+          batch: targetBatch,
+          quantity: 1,
+          appliedPromotion: defaultPromo,
+          scannedBarcode: resolvedBarcode,
+        },
+      ];
     });
   }
 
@@ -304,7 +370,12 @@ export default function PosPage() {
           if (item.product.id === productId && item.batch.id === batchId) {
             const newQty = item.quantity + delta;
             if (delta > 0 && newQty > item.batch.remainingQuantity) {
-              alert(`ロット「${item.batch.batchCode}」の在庫上限 (${item.batch.remainingQuantity}個) に達しています。`);
+              setScanAlert({
+                type: 'warning',
+                title: 'ロット在庫上限',
+                message: `ロット「${item.batch.batchCode}」の在庫上限 (${item.batch.remainingQuantity}個) に達しています。`,
+              });
+              setTimeout(() => setScanAlert(null), 4500);
               return item;
             }
             return newQty > 0 ? { ...item, quantity: newQty } : null;
@@ -324,49 +395,120 @@ export default function PosPage() {
     setRecommendations([]);
   }
 
-  // Quick Barcode Scan simulation
-  function scanBarcode(code: string) {
-    // 1. Discount Stickers & Special Batch Scans
-    if (code === 'STICKER-SAND-001') {
-      const p = products.find((prod) => prod.productCode === 'SAND-001');
-      const b = p?.batches?.find((batch) => batch.batchCode === 'BATCH-SAND-001');
-      if (p && b) {
-        addToCart(p, b);
+  // Dynamic Barcode Scanner: handles JAN, batch codes, sticker codes, and server fallback
+  function scanBarcode(rawCode: string) {
+    if (!rawCode || !rawCode.trim()) return;
+    const code = rawCode.trim();
+
+    // 1. Direct Batch Code Match across all products
+    for (const p of products) {
+      const b = p.batches?.find((batch) => batch.batchCode.toLowerCase() === code.toLowerCase());
+      if (b) {
+        addToCart(p, b, code);
         return;
       }
     }
+
+    // 2. Discount Sticker & Special Pattern (e.g. STICKER-SAND-001, EXPIRED-SAND, STICKER-BENTO-001)
+    if (code.toUpperCase().includes('STICKER') || code.toUpperCase().includes('DISCOUNT')) {
+      for (const p of products) {
+        const b = p.batches?.find((batch) =>
+          code.toLowerCase().includes(batch.batchCode.toLowerCase()) ||
+          code.toLowerCase().includes(p.productCode.toLowerCase())
+        );
+        if (b) {
+          addToCart(p, b, code);
+          return;
+        }
+      }
+    }
+
     if (code === 'EXPIRED-SAND') {
       const p = products.find((prod) => prod.productCode === 'SAND-001');
       const b = p?.batches?.find((batch) => batch.batchCode === 'BATCH-SAND-EXPIRED');
       if (p && b) {
-        addToCart(p, b);
-        return;
-      }
-    }
-    if (code === 'STICKER-BENTO-001') {
-      const p = products.find((prod) => prod.productCode === 'BENTO-001');
-      const b = p?.batches?.find((batch) => batch.batchCode === 'BATCH-BENTO-001');
-      if (p && b) {
-        addToCart(p, b);
+        addToCart(p, b, code);
         return;
       }
     }
 
-    // 2. Standard JAN Barcode: Sells normal/fresh batch at regular price
-    const found = products.find((p) => p.barcode === code);
-    if (found) {
-      const normalBatch = found.batches?.find((b) => !b.isExpired && !b.isDiscounted && b.remainingQuantity > 0)
-        || found.batches?.find((b) => !b.isExpired && b.remainingQuantity > 0);
+    // 3. Product JAN Barcode or Product Code Match
+    const foundProduct = products.find(
+      (p) => p.barcode === code || p.productCode.toLowerCase() === code.toLowerCase()
+    );
+    if (foundProduct) {
+      // Preference: non-discounted regular batch (or earliest non-expired batch)
+      const normalBatch =
+        foundProduct.batches?.find((b) => !b.isExpired && !b.isDiscounted && b.remainingQuantity > 0) ||
+        foundProduct.batches?.find((b) => !b.isExpired && b.remainingQuantity > 0);
+
       if (normalBatch) {
-        addToCart(found, normalBatch);
+        addToCart(foundProduct, normalBatch, code);
       } else {
-        alert(`「${found.name}」は有効な在庫がありません。`);
+        setScanAlert({
+          type: 'error',
+          title: '販売不可',
+          message: `「${foundProduct.name}」は有効なロット在庫がありません（完売または賞味期限切れ）。`,
+        });
+        setTimeout(() => setScanAlert(null), 4500);
       }
+      return;
     }
+
+    // 4. Server-side API fallback
+    scanBarcodeApi(code)
+      .then((res) => {
+        if (res.success && res.productId && res.batchId) {
+          const prod = products.find((p) => p.id === res.productId);
+          const batch = prod?.batches?.find((b) => b.id === res.batchId);
+          if (prod && batch) {
+            addToCart(prod, batch, code);
+            return;
+          }
+        }
+        setScanAlert({
+          type: 'error',
+          title: '未登録バーコード',
+          message: res.message || `バーコード「${code}」に一致する商品・ロットが見つかりませんでした。`,
+        });
+        setTimeout(() => setScanAlert(null), 4500);
+      })
+      .catch(() => {
+        setScanAlert({
+          type: 'error',
+          title: '未登録バーコード',
+          message: `バーコード「${code}」に一致する商品・ロットが見つかりませんでした。`,
+        });
+        setTimeout(() => setScanAlert(null), 4500);
+      });
   }
 
-  // Apply recommendation by adding target product to cart with promo
+  function handleScanInput() {
+    if (!searchQuery.trim()) return;
+    const code = searchQuery.trim();
+    scanBarcode(code);
+    setSearchQuery('');
+  }
+
+  // Apply recommendation by adding target product (or combo partner) to cart with promo
   function applyRecommendation(promo: PosRecommendationItem) {
+    if (promo.promotionType === 'BUNDLE_COMBO' && promo.comboProductId) {
+      const partnerProduct = products.find((p) => p.id === promo.comboProductId);
+      if (partnerProduct) {
+        const validBatch = (partnerProduct.batches || []).find((b) => !b.isExpired && b.remainingQuantity > 0);
+        if (validBatch) {
+          addToCart(partnerProduct, validBatch);
+          setScanAlert({
+            type: 'success',
+            title: 'コンボ商品をカゴに追加',
+            message: `「${partnerProduct.name}」をカゴに追加しました。ランチコンボ割引（-¥${promo.savingsAmount || 70}）が自動適用されます！`,
+          });
+          setTimeout(() => setScanAlert(null), 4000);
+          return;
+        }
+      }
+    }
+
     const productToAdd = products.find((p) => p.id === promo.targetProductId);
     if (!productToAdd) return;
 
@@ -387,13 +529,21 @@ export default function PosPage() {
   // Cart Calculations
   const subtotal = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
 
+  // Check active combo discounts from recommendations
+  const activeComboDiscount = recommendations.reduce((acc, r) => {
+    if (r.promotionType === 'BUNDLE_COMBO_APPLIED') {
+      return acc + (r.savingsAmount || 70);
+    }
+    return acc;
+  }, 0);
+
   const discountTotal = cart.reduce((sum, item) => {
     if (item.appliedPromotion) {
       const discountRate = item.appliedPromotion.discountPercent / 100;
       return sum + Math.round(item.product.price * discountRate * item.quantity);
     }
     return sum;
-  }, 0);
+  }, 0) + activeComboDiscount;
 
   const totalAmount = Math.max(0, subtotal - discountTotal);
   const changeAmount = Math.max(0, receivedAmount - totalAmount);
@@ -424,6 +574,8 @@ export default function PosPage() {
         items: cart.map((i) => ({
           productId: i.product.id,
           batchId: i.batch.id,
+          batchCode: i.batch.batchCode,
+          scannedBarcode: i.scannedBarcode || i.product.barcode || i.batch.batchCode,
           quantity: i.quantity,
           appliedPromotionId: i.appliedPromotion?.promotionId,
         })),
@@ -460,59 +612,61 @@ export default function PosPage() {
                 <Search className="w-5 h-5 absolute left-3.5 top-3 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="商品名、JANバーコード、型番で検索..."
+                  placeholder="JANコード、ロット番号 (BATCH-...)、型番を入力またはバーコードスキャン (Enterで登録)..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleScanInput();
+                    }
+                  }}
                   className="w-full pl-10 pr-4 py-2.5 bg-white rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-inner"
                 />
               </div>
+              <button
+                onClick={handleScanInput}
+                disabled={!searchQuery.trim()}
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-bold text-xs rounded-xl shadow transition flex items-center gap-1.5 shrink-0 active:scale-95"
+              >
+                <Barcode className="w-4 h-4" />
+                <span>スキャン実行</span>
+              </button>
             </div>
 
-            {/* Fast Barcode Simulator Buttons */}
-            <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-              <span className="font-bold flex items-center gap-1 text-slate-700 mr-1">
-                <Barcode className="w-4 h-4 text-emerald-600" /> バーコード即時スキャン:
-              </span>
-              <button
-                onClick={() => scanBarcode('4901234567035')}
-                className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 px-2.5 py-1 rounded-md font-semibold transition"
-                title="通常ロットを定価(¥280)で登録"
+            {/* Real-time Scan Notification Alert */}
+            {scanAlert && (
+              <div
+                className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-2 shadow-sm transition animate-in fade-in slide-in-from-top-2 ${
+                  scanAlert.type === 'error'
+                    ? 'bg-rose-50 border-rose-300 text-rose-900'
+                    : scanAlert.type === 'warning'
+                    ? 'bg-amber-50 border-amber-300 text-amber-900'
+                    : 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                }`}
               >
-                🥪 サンド通常(JAN) ¥280
-              </button>
-              <button
-                onClick={() => scanBarcode('STICKER-SAND-001')}
-                className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-400 px-2.5 py-1 rounded-md font-bold transition flex items-center gap-1"
-                title="値引きシール(BATCH-SAND-001)をスキャン 40% OFF"
-              >
-                <Sparkles className="w-3 h-3 text-amber-600" /> 🥪 サンド値引シール 40%引 (¥168)
-              </button>
-              <button
-                onClick={() => scanBarcode('EXPIRED-SAND')}
-                className="bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300 px-2.5 py-1 rounded-md font-bold transition flex items-center gap-1"
-                title="賞味期限切れロット(BATCH-SAND-EXPIRED)の販売防止テスト"
-              >
-                <AlertTriangle className="w-3 h-3 text-rose-600" /> ⛔ 期限切れテスト (販売拒否)
-              </button>
-              <button
-                onClick={() => scanBarcode('4901234567011')}
-                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-md font-semibold transition"
-              >
-                🍱 弁当(通常) ¥550
-              </button>
-              <button
-                onClick={() => scanBarcode('STICKER-BENTO-001')}
-                className="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 px-2.5 py-1 rounded-md font-bold transition"
-              >
-                🍱 弁当シール 20%引 (¥440)
-              </button>
-              <button
-                onClick={() => scanBarcode('4901234567028')}
-                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-md font-semibold transition"
-              >
-                🥗 サラダ ¥240
-              </button>
-            </div>
+                <div className="flex items-center gap-2">
+                  {scanAlert.type === 'error' ? (
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                  ) : scanAlert.type === 'warning' ? (
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  ) : (
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                  )}
+                  <div>
+                    <span className="font-bold block">{scanAlert.title}</span>
+                    <span className="text-[11px] opacity-90">{scanAlert.message}</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setScanAlert(null)}
+                  className="text-slate-400 hover:text-slate-600 text-xs px-1.5 py-0.5 rounded"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
 
             {/* Category Filter Pills */}
             <div className="flex overflow-x-auto gap-1.5 pt-1 text-xs">
@@ -761,31 +915,99 @@ export default function PosPage() {
               </select>
             </div>
 
-            {/* Smart Promotion Alerts (Real-time Recommendation < 500ms) */}
+            {/* AI 接客アシスト・レコメンデーション専用ウィジェット (AI Upsell Assistant Box) */}
             {recommendations.length > 0 && (
-              <div className="p-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-inner">
-                <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider mb-1.5">
-                  <Sparkles className="w-4 h-4 text-amber-300 animate-spin" />
-                  <span>AIおすすめプロモーション (承認済)</span>
-                </div>
-                <div className="space-y-2">
-                  {recommendations.map((promo) => (
-                    <div
-                      key={promo.promotionId}
-                      className="bg-white/10 backdrop-blur-sm p-2.5 rounded-xl border border-white/20 flex items-center justify-between"
-                    >
-                      <div className="pr-2">
-                        <p className="font-black text-xs text-amber-200">{promo.message}</p>
-                        <p className="text-[11px] text-white/90 italic mt-0.5">{promo.actionPrompt}</p>
-                      </div>
-                      <button
-                        onClick={() => applyRecommendation(promo)}
-                        className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs px-3 py-1.5 rounded-lg whitespace-nowrap shadow transition active:scale-95"
-                      >
-                        おすすめする
-                      </button>
+              <div className="p-3.5 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white rounded-xl mx-3 mt-3 shadow-lg border border-indigo-500/30">
+                <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-white/10">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-full bg-amber-400 text-slate-950 flex items-center justify-center font-black text-xs shadow-xs animate-pulse">
+                      💡
+                    </span>
+                    <div>
+                      <h3 className="font-black text-xs text-white flex items-center gap-1.5">
+                        <span>AI 接客アシスト</span>
+                        <span className="bg-indigo-500/80 text-white text-[9px] font-bold px-1.5 py-0.2 rounded-full border border-indigo-400/40 uppercase">
+                          リアルタイム提案
+                        </span>
+                      </h3>
                     </div>
-                  ))}
+                  </div>
+                  <span className="text-[10px] text-indigo-300 font-mono font-bold">✨ AI Recommendation</span>
+                </div>
+
+                <div className="space-y-2.5">
+                  {recommendations.map((promo) => {
+                    const isCombo = promo.promotionType === 'BUNDLE_COMBO';
+                    const isComboApplied = promo.promotionType === 'BUNDLE_COMBO_APPLIED';
+
+                    if (isComboApplied) {
+                      return (
+                        <div
+                          key={promo.promotionId}
+                          className="bg-emerald-500/20 border border-emerald-400/40 rounded-xl p-2.5 text-xs text-emerald-200 flex items-center justify-between"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg">🎉</span>
+                            <div>
+                              <p className="font-black text-white">{promo.message}</p>
+                              <p className="text-[10px] text-emerald-300">合計金額から ¥{(promo.savingsAmount || 70).toLocaleString()} 値引きされています</p>
+                            </div>
+                          </div>
+                          <span className="bg-emerald-500 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-full">
+                            適用中
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={promo.promotionId}
+                        className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 space-y-2 transition shadow-xs"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-base">{isCombo ? '🥪🍵' : '🏷️'}</span>
+                            <span className="font-black text-xs text-amber-300">
+                              {isCombo ? 'ランチコンボの追加提案' : '値引きシールの適用案内'}
+                            </span>
+                            {isCombo && (
+                              <span className="bg-amber-400 text-slate-950 font-black text-[9px] px-1.5 py-0.2 rounded">
+                                ¥{(promo.savingsAmount || 70)} お得
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Staff Script Speech Bubble (お客様へのご案内セリフ) */}
+                        <div className="bg-amber-400/10 border border-amber-400/30 rounded-lg p-2 text-xs">
+                          <div className="text-[10px] font-bold text-amber-300 flex items-center gap-1 mb-0.5">
+                            <span>🗣️ お客様へのお声がけセリフ（レジ接客推奨）:</span>
+                          </div>
+                          <p className="text-white font-medium italic text-[11px] leading-relaxed">
+                            {promo.staffScript || promo.actionPrompt}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1">
+                          <div className="text-[10px] text-slate-300">
+                            {isCombo ? (
+                              <span>セット価格: <strong className="text-amber-300 text-sm font-black">¥{promo.comboPrice?.toLocaleString() || '350'}</strong> (通常: ¥{promo.originalPrice?.toLocaleString()})</span>
+                            ) : (
+                              <span>値引き後価格: <strong className="text-amber-300 text-sm font-black">¥{promo.finalPrice?.toLocaleString()}</strong></span>
+                            )}
+                          </div>
+
+                          <button
+                            onClick={() => applyRecommendation(promo)}
+                            className="bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs px-3 py-1.5 rounded-lg shadow-md flex items-center gap-1.5 transition active:scale-95 whitespace-nowrap"
+                          >
+                            <span>{isCombo ? `＋ ${promo.comboProductName || '宇治緑茶'}を追加` : 'おすすめする'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -820,6 +1042,11 @@ export default function PosPage() {
                             <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200">
                               ロット: {item.batch.batchCode}
                             </span>
+                            {item.scannedBarcode && (
+                              <span className="text-[9px] font-mono font-bold bg-emerald-50 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-200" title="スキャンされたバーコード">
+                                🏷️ {item.scannedBarcode}
+                              </span>
+                            )}
                             {isHighlighted && (
                               <span className="bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded shadow">
                                 ⚡ 即時更新
@@ -1079,7 +1306,7 @@ export default function PosPage() {
                   <div>
                     <span className="font-bold">{item.productName}</span>
                     <span className="block text-[10px] text-slate-500">
-                      ロット: {item.batchCode || '通常'} | ¥{item.unitPrice} × {item.quantity}点
+                      JAN: {item.barcode || 'N/A'} | ロット: {item.batchCode || '通常'} | ¥{item.unitPrice} × {item.quantity}点
                     </span>
                   </div>
                   <div className="text-right">
@@ -1120,9 +1347,11 @@ export default function PosPage() {
               </div>
             </div>
 
-            <div className="text-center pt-2 text-[10px] text-slate-500">
+            <div className="text-center pt-2 text-[10px] text-slate-500 border-t border-dashed border-slate-200">
               <p>お買い上げありがとうございます。</p>
-              <p>ロット在庫が自動更新されました。</p>
+              <p className="text-emerald-700 font-bold mt-0.5">
+                ✓ スキャンされたバーコード情報に基づき、対象ロット在庫から正確に引き落とされました。
+              </p>
             </div>
 
             <button

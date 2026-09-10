@@ -163,8 +163,14 @@ public class Promotion
     [Column(TypeName = "decimal(5,2)")]
     public decimal? DiscountPercent { get; set; }
 
+    public int? ComboProductId { get; set; }
+    public Product? ComboProduct { get; set; }
+
     [Column(TypeName = "decimal(18,2)")]
     public decimal? ComboPrice { get; set; }
+
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal? ComboDiscountAmount { get; set; }
 
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; } // Must satisfy EndTime <= TargetBatch.ExpiryDate (BR-003)
@@ -315,8 +321,17 @@ public class AIRecommendation
     [Column(TypeName = "decimal(5,2)")]
     public decimal? RecommendedDiscountPercent { get; set; }
 
+    public int? ComboProductId { get; set; }
+    public Product? ComboProduct { get; set; }
+
+    [MaxLength(200)]
+    public string? ComboProductName { get; set; }
+
     [Column(TypeName = "decimal(18,2)")]
     public decimal? RecommendedComboPrice { get; set; }
+
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal? RecommendedComboSavings { get; set; }
 
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }

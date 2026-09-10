@@ -16,6 +16,7 @@ public class AiRecommendationRepository : Repository<AIRecommendation>, IAiRecom
         return await _dbSet
             .Include(r => r.TargetProduct)
             .Include(r => r.TargetBatch)
+            .Include(r => r.ComboProduct)
             .Include(r => r.Evidences)
             .OrderByDescending(r => r.CreatedAt)
             .ToListAsync(cancellationToken);
@@ -26,14 +27,19 @@ public class AiRecommendationRepository : Repository<AIRecommendation>, IAiRecom
         return await _dbSet
             .Include(r => r.TargetProduct)
             .Include(r => r.TargetBatch)
+            .Include(r => r.ComboProduct)
             .Include(r => r.Evidences)
             .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
     }
 
-    public async Task<AIRecommendation?> GetPendingForBatchAsync(int batchId, CancellationToken cancellationToken = default)
+    public async Task<AIRecommendation?> GetPendingForBatchAsync(int batchId, string? recommendationType = null, CancellationToken cancellationToken = default)
     {
-        return await _dbSet
-            .FirstOrDefaultAsync(r => r.TargetBatchId == batchId && r.Status == "PENDING", cancellationToken);
+        var q = _dbSet.Where(r => r.TargetBatchId == batchId && r.Status == "PENDING");
+        if (!string.IsNullOrEmpty(recommendationType))
+        {
+            q = q.Where(r => r.RecommendationType == recommendationType);
+        }
+        return await q.FirstOrDefaultAsync(cancellationToken);
     }
 
     public async Task<int> GetPendingCountAsync(CancellationToken cancellationToken = default)

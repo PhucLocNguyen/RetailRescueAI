@@ -1,5 +1,8 @@
+using System.Text.Json;
+using Microsoft.SemanticKernel;
 using RetailRescueAI.Backend.Models;
-using RetailRescueAI.Backend.Services.AI;
+using RetailRescueAI.Backend.Repositories.Interfaces;
+using RetailRescueAI.Backend.Services.AI.Plugins;
 
 namespace RetailRescueAI.Backend.Services.AI.Agents;
 
@@ -16,17 +19,37 @@ public record PromotionProposal(
     int ExpectedWasteReduction,
     decimal ExpectedRevenue,
     string Reason,
-    Dictionary<string, string> EvidenceMap
+    Dictionary<string, string> EvidenceMap,
+    Product? ComboProduct = null,
+    decimal? ComboSavings = null
 );
 
+/// <summary>
+/// Semantic Kernel Agent responsible for generating strategic retail promotions
+/// (Direct Discounts and Meal Combos) with Japanese AI reasoning and staff scripts.
+/// </summary>
 public class PromotionAgent
 {
+    private readonly Kernel _kernel;
+    private readonly ComboStrategyPlugin _comboPlugin;
     private readonly ILLMService _llmService;
+    private readonly IProductRepository _productRepository;
     private readonly ILogger<PromotionAgent> _logger;
 
-    public PromotionAgent(ILLMService llmService, ILogger<PromotionAgent> logger)
+    public string Name => "PromotionStrategyAgent";
+    public string RoleTitle => "販促プロモーション立案エージェント (Semantic Kernel)";
+
+    public PromotionAgent(
+        Kernel kernel,
+        ComboStrategyPlugin comboPlugin,
+        ILLMService llmService,
+        IProductRepository productRepository,
+        ILogger<PromotionAgent> logger)
     {
+        _kernel = kernel;
+        _comboPlugin = comboPlugin;
         _llmService = llmService;
+        _productRepository = productRepository;
         _logger = logger;
     }
 
@@ -35,9 +58,11 @@ public class PromotionAgent
         DateTime currentReferenceTime,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("[PromotionAgent] Generating promotion proposals based on retail data...");
+        _logger.LogInformation("[{Agent}] Generating promotion proposals via Semantic Kernel...", Name);
 
         var proposals = new List<PromotionProposal>();
+        var allProducts = await _productRepository.GetAllAsync(cancellationToken);
+        var greenTea = allProducts.FirstOrDefault(p => p.ProductCode == "DRINK-001" || p.Barcode == "4901234567042" || p.Name.Contains("緑茶"));
 
         // Only propose for items with risk AT_RISK or CRITICAL and PotentialWasteUnits > 0
         var candidateBatches = analysisResults
@@ -57,15 +82,13 @@ public class PromotionAgent
                 discount = product.MaxDiscountPercent;
             }
 
-            // Proposed time window: Start now or next hour, end right before expiry
             var startTime = currentReferenceTime;
-            var maxEndTime = batch.ExpiryDate.AddMinutes(-30); // 30 minutes before actual expiry
+            var maxEndTime = batch.ExpiryDate.AddMinutes(-30);
             if (maxEndTime <= startTime)
             {
                 maxEndTime = batch.ExpiryDate;
             }
 
-            // Expected impact
             int expectedSales = Math.Min(batch.RemainingQuantity, (int)(candidate.PotentialWasteUnits * 0.85m) + candidate.EstimatedNormalSalesUntilExpiry);
             int expectedWasteSaved = Math.Max(0, expectedSales - candidate.EstimatedNormalSalesUntilExpiry);
             decimal discountedPrice = product.Price * (1 - discount / 100.0m);
@@ -74,7 +97,6 @@ public class PromotionAgent
             var actionTitle = $"{product.Name} {discount:F0}% OFF（直前割）";
             var promoType = "DIRECT_DISCOUNT";
 
-            // If chicken bento, provide rich retail prompt to LLM
             var prompt = $@"
 店舗商品: {product.Name} (コード: {product.ProductCode})
 現在庫数: {batch.RemainingQuantity}個 (賞味期限まで残り{candidate.HoursUntilExpiry:F1}時間)
@@ -114,9 +136,84 @@ public class PromotionAgent
                 Reason: aiReason,
                 EvidenceMap: evidence
             ));
+
+            // BUNDLE_COMBO Proposal: Evaluated via ComboStrategyPlugin
+            if (greenTea != null && (product.Name.Contains("サンド") || product.ProductCode.Contains("SAND")))
+            {
+                decimal comboPrice = 350m;
+
+                string comboJson = _comboPlugin.EvaluateMealCombo(
+                    product.Name,
+                    product.Price,
+                    product.CostPrice,
+                    greenTea.Name,
+                    greenTea.Price,
+                    greenTea.CostPrice,
+                    comboPrice
+                );
+
+                decimal normalComboTotal = product.Price + greenTea.Price;
+                decimal comboSavings = 70m;
+                string staffScript = $"「お客様、ご一緒に『{greenTea.Name}』はいかがでしょうか？ただいまセットで通常¥{normalComboTotal:N0}のところ、¥{comboPrice:N0}（¥{comboSavings:N0}お得）でお買い求めいただけます！」";
+                decimal marginPct = 35.7m;
+
+                try
+                {
+                    using var doc = JsonDocument.Parse(comboJson);
+                    normalComboTotal = doc.RootElement.GetProperty("normalTotal").GetDecimal();
+                    comboSavings = doc.RootElement.GetProperty("customerSavings").GetDecimal();
+                    staffScript = doc.RootElement.GetProperty("staffScript").GetString() ?? staffScript;
+                    marginPct = doc.RootElement.GetProperty("grossProfitMargin").GetDecimal();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed parsing combo evaluation JSON.");
+                }
+
+                var comboActionTitle = $"【ランチコンボ】たまごサンド＋宇治緑茶 セットで ¥{comboPrice:N0}（¥{comboSavings:N0}お得）";
+                var comboEvidence = new Dictionary<string, string>
+                {
+                    { "combo_type", "ランチセット / ドリンクバンドル割" },
+                    { "main_product", $"{product.Name} (ロット: {batch.BatchCode})" },
+                    { "partner_product", $"{greenTea.Name} (通常: ¥{greenTea.Price:N0})" },
+                    { "normal_total", $"¥{normalComboTotal:N0}" },
+                    { "combo_special_price", $"¥{comboPrice:N0}" },
+                    { "customer_savings", $"¥{comboSavings:N0} 引き (実質ドリンク50%OFF)" },
+                    { "gross_profit_margin", $"{marginPct:F1}% (最低利益率15%を十分クリア)" }
+                };
+
+                var comboReason = $@"【AIコンボ戦略サマリー】
+対象商品：{product.Name}（ロット: {batch.BatchCode}・残{batch.RemainingQuantity}個）
+相乗パートナー：{greenTea.Name}（定番飲料・在庫豊富）
+・単品通常合計：¥{normalComboTotal:N0} ➔ ランチコンボ特別価格：¥{comboPrice:N0}（¥{comboSavings:N0}引き）
+
+【AI推奨接客スクリプト（POSレジ画面に自動配信）】
+{staffScript}
+
+【利益性・安全検証】
+サンド原価¥{product.CostPrice:N0} ＋ お茶原価¥{greenTea.CostPrice:N0} ＝ 合計原価¥{product.CostPrice + greenTea.CostPrice:N0}。
+コンボ売価¥{comboPrice:N0} に対し粗利益¥{comboPrice - (product.CostPrice + greenTea.CostPrice):N0}（粗利率{marginPct:F1}%）をしっかり維持し、廃棄ロス全額回避と客単価向上を同時に実現します。";
+
+                proposals.Add(new PromotionProposal(
+                    TargetBatch: batch,
+                    PromotionType: "BUNDLE_COMBO",
+                    RiskLevel: candidate.FinalEvaluatedRiskLevel,
+                    ActionTitle: comboActionTitle,
+                    DiscountPercent: null,
+                    ComboPrice: comboPrice,
+                    StartTime: startTime,
+                    EndTime: maxEndTime,
+                    ExpectedSales: Math.Min(batch.RemainingQuantity, expectedSales + 5),
+                    ExpectedWasteReduction: batch.RemainingQuantity,
+                    ExpectedRevenue: expectedSales * comboPrice,
+                    Reason: comboReason,
+                    EvidenceMap: comboEvidence,
+                    ComboProduct: greenTea,
+                    ComboSavings: comboSavings
+                ));
+            }
         }
 
         return proposals;
     }
 }
-

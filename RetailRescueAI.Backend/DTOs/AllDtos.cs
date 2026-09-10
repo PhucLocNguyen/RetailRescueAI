@@ -58,7 +58,12 @@ public record PosRecommendationItemDto(
     decimal DiscountPercent,
     decimal FinalPrice,
     string Message,
-    string ActionPrompt // e.g. "チキン弁当をお買い上げでサラダが20%OFF！"
+    string ActionPrompt, // e.g. "チキン弁当をお買い上げでサラダが20%OFF！"
+    int? ComboProductId = null,
+    string? ComboProductName = null,
+    decimal? ComboPrice = null,
+    decimal? SavingsAmount = null,
+    string? StaffScript = null // e.g. "「お客様、ご一緒に『宇治緑茶 500ml』はいかがでしょうか？セットで ¥350（¥70お得）でお買い求めいただけます！」"
 );
 
 public record PosRecommendationResponse(
@@ -69,7 +74,9 @@ public record CheckoutItemRequest(
     int ProductId,
     int BatchId,
     int Quantity,
-    int? AppliedPromotionId
+    int? AppliedPromotionId,
+    string? ScannedBarcode = null,
+    string? BatchCode = null
 );
 
 public record CheckoutRequest(
@@ -94,10 +101,29 @@ public record CheckoutResponse(
 public record ReceiptItemDto(
     string ProductName,
     string BatchCode,
+    string Barcode,
     int Quantity,
     decimal UnitPrice,
     decimal DiscountAmount,
     decimal FinalPrice
+);
+
+public record PosScanResultDto(
+    bool Success,
+    string Message,
+    int? ProductId,
+    string? ProductName,
+    string? Barcode,
+    int? BatchId,
+    string? BatchCode,
+    int? RemainingQuantity,
+    decimal Price,
+    bool IsDiscounted,
+    decimal? DiscountPercent,
+    decimal? FinalPrice,
+    int? PromotionId,
+    string? PromotionName,
+    bool IsExpired
 );
 
 // Inventory & Expiry
@@ -155,7 +181,10 @@ public record AIRecommendationDto(
     string Reason,
     string Status,
     DateTime CreatedAt,
-    List<AIEvidenceDto> Evidences
+    List<AIEvidenceDto> Evidences,
+    int? ComboProductId = null,
+    string? ComboProductName = null,
+    decimal? RecommendedComboSavings = null
 );
 
 public record AIEvidenceDto(
@@ -166,7 +195,8 @@ public record AIEvidenceDto(
 
 public record ApproveRecommendationRequest(
     string? Notes,
-    decimal? CustomDiscountPercent = null
+    decimal? CustomDiscountPercent = null,
+    decimal? CustomComboPrice = null
 );
 
 public record RejectRecommendationRequest(
@@ -192,7 +222,10 @@ public record PromotionDto(
     string? ApprovedBy,
     DateTime? ApprovedAt,
     string? AiReasoning,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    int? ComboProductId = null,
+    string? ComboProductName = null,
+    decimal? ComboDiscountAmount = null
 );
 
 public record CreatePromotionRequest(

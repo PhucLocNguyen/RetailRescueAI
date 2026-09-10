@@ -29,6 +29,7 @@ export default function AiRecommendationsPage() {
   const [statusFilter, setStatusFilter] = useState('PENDING');
   const [processingId, setProcessingId] = useState<number | null>(null);
   const [customDiscounts, setCustomDiscounts] = useState<Record<number, number>>({});
+  const [customComboPrices, setCustomComboPrices] = useState<Record<number, number>>({});
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
 
   useEffect(() => {
@@ -47,15 +48,22 @@ export default function AiRecommendationsPage() {
     }
   }
 
-  async function handleApprove(id: number, title: string, discountPercent: number) {
-    if (!confirm(`提案「${title}」を ${discountPercent}% 割引で承認しますか？\n承認すると直ちにPOSレジで適用されます。`)) {
+  async function handleApprove(id: number, title: string, discountPercent?: number, comboPrice?: number) {
+    const isCombo = comboPrice !== undefined && comboPrice !== null;
+    const confirmMsg = isCombo
+      ? `提案「${title}」を コンボ特別価格 ¥${comboPrice.toLocaleString()} で承認しますか？\n承認すると直ちにPOSレジで有効化されます。`
+      : `提案「${title}」を ${discountPercent}% 割引で承認しますか？\n承認すると直ちにPOSレジで適用されます。`;
+
+    if (!confirm(confirmMsg)) {
       return;
     }
 
     setProcessingId(id);
     try {
-      await approveAIRecommendation(id, discountPercent);
-      alert(`プロモーションを ${discountPercent}% 割引で承認しました！レジ画面で即時有効になります。`);
+      await approveAIRecommendation(id, discountPercent, comboPrice);
+      alert(isCombo
+        ? `ランチコンボを特別価格 ¥${comboPrice.toLocaleString()} で承認しました！POSレジで即時有効になります。`
+        : `プロモーションを ${discountPercent}% 割引で承認しました！レジ画面で即時有効になります。`);
       await loadRecommendations();
     } catch (err) {
       alert('承認処理に失敗しました。');
@@ -159,12 +167,16 @@ export default function AiRecommendationsPage() {
             const isPending = rec.status === 'PENDING';
             const isApproved = rec.status === 'APPROVED';
 
+            const isCombo = rec.recommendationType === 'BUNDLE_COMBO';
+            const activeComboPrice = customComboPrices[rec.id] ?? rec.recommendedComboPrice ?? 350;
+            const activeDiscount = customDiscounts[rec.id] ?? rec.recommendedDiscountPercent ?? 20;
+
             return (
               <div
                 key={rec.id}
                 className={`bg-white rounded-2xl border p-6 shadow-sm transition flex flex-col gap-5 ${
                   isPending
-                    ? 'border-indigo-300 ring-1 ring-indigo-200'
+                    ? isCombo ? 'border-purple-300 ring-1 ring-purple-200' : 'border-indigo-300 ring-1 ring-indigo-200'
                     : isApproved
                     ? 'border-emerald-200 bg-emerald-50/10'
                     : 'border-slate-200 opacity-75'
@@ -175,6 +187,15 @@ export default function AiRecommendationsPage() {
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs text-slate-400 font-bold">{rec.recommendationCode}</span>
+                      {isCombo ? (
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 flex items-center gap-1">
+                          🍱 ランチコンボ割
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                          🏷️ 単品値引き割
+                        </span>
+                      )}
                       <span
                         className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                           rec.riskLevel === 'CRITICAL'
@@ -201,20 +222,28 @@ export default function AiRecommendationsPage() {
                       <span>{rec.recommendedAction}</span>
                     </h3>
                     <p className="text-xs text-slate-500">
-                      対象商品: <strong className="text-slate-800">{rec.targetProductName}</strong> / ロット:{' '}
-                      <strong className="text-indigo-600 font-mono">{rec.targetBatchCode}</strong>
+                      対象ロット: <strong className="text-slate-800">{rec.targetProductName}</strong> (<strong className="text-indigo-600 font-mono">{rec.targetBatchCode}</strong>)
+                      {isCombo && rec.comboProductName && (
+                        <span className="text-purple-700 font-bold ml-1">
+                          ＋ セット商品: <strong>{rec.comboProductName}</strong>
+                        </span>
+                      )}
                     </p>
                   </div>
 
                   {/* Impact Highlights */}
                   <div className="flex gap-4 sm:border-l sm:pl-5 border-slate-100 text-xs">
                     <div>
-                      <span className="text-slate-400 block text-[10px]">期待販売数</span>
-                      <span className="font-black text-slate-900 text-base">{rec.expectedSales} 個</span>
+                      <span className="text-slate-400 block text-[10px]">{isCombo ? 'コンボ売価' : '期待販売数'}</span>
+                      <span className="font-black text-slate-900 text-base">
+                        {isCombo ? `¥${activeComboPrice.toLocaleString()}` : `${rec.expectedSales} 個`}
+                      </span>
                     </div>
                     <div>
-                      <span className="text-slate-400 block text-[10px]">廃棄救済見込</span>
-                      <span className="font-black text-emerald-600 text-base">+{rec.expectedWasteReduction} 個</span>
+                      <span className="text-slate-400 block text-[10px]">{isCombo ? 'お得額' : '廃棄救済見込'}</span>
+                      <span className="font-black text-emerald-600 text-base">
+                        {isCombo ? `-¥${(rec.recommendedComboSavings ?? 70).toLocaleString()}` : `+${rec.expectedWasteReduction} 個`}
+                      </span>
                     </div>
                     <div>
                       <span className="text-slate-400 block text-[10px]">期待回収収益</span>
@@ -228,7 +257,7 @@ export default function AiRecommendationsPage() {
                   <div className="md:col-span-2 bg-slate-50 p-4 rounded-xl border border-slate-200">
                     <h4 className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-2">
                       <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>AIエージェントの算出根拠・理由（日本語解説）</span>
+                      <span>AIエージェントの算出根拠・接客スクリプト（日本語解説）</span>
                     </h4>
                     <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-line font-sans">
                       {rec.reason}
@@ -252,56 +281,97 @@ export default function AiRecommendationsPage() {
                   </div>
                 </div>
 
-                {/* Manager Discount % Adjuster (Only on PENDING proposals) */}
+                {/* Manager Price / Discount Adjuster (Only on PENDING proposals) */}
                 {isPending && (
-                  <div className="bg-indigo-50/60 p-4 rounded-xl border border-indigo-200/80 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                  <div className={`${isCombo ? 'bg-purple-50/60 border-purple-200/80' : 'bg-indigo-50/60 border-indigo-200/80'} p-4 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs`}>
                     <div className="space-y-1">
-                      <div className="flex items-center gap-1.5 font-black text-indigo-950">
-                        <Sliders className="w-4 h-4 text-indigo-600" />
-                        <span>店長による割引率の調整（AI推奨: {rec.recommendedDiscountPercent || 20}% OFF）</span>
+                      <div className={`flex items-center gap-1.5 font-black ${isCombo ? 'text-purple-950' : 'text-indigo-950'}`}>
+                        <Sliders className={`w-4 h-4 ${isCombo ? 'text-purple-600' : 'text-indigo-600'}`} />
+                        <span>
+                          {isCombo
+                            ? `店長によるコンボ特別価格の調整（AI推奨: ¥${rec.recommendedComboPrice || 350}）`
+                            : `店長による割引率の調整（AI推奨: ${rec.recommendedDiscountPercent || 20}% OFF）`}
+                        </span>
                       </div>
                       <p className="text-[11px] text-slate-500">
-                        店舗の立地・天候・客足に合わせて割引率を微調整できます。承認すると即時POSレジへ反映されます。
+                        {isCombo
+                          ? '店舗の売れ行きに合わせてセット価格を微調整できます。承認するとPOS画面にAI接客アシストとして配信されます。'
+                          : '店舗の立地・天候・客足に合わせて割引率を微調整できます。承認すると即時POSレジへ反映されます。'}
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-3 bg-white p-2 rounded-xl border border-indigo-200 shadow-xs">
-                      {/* Quick percent buttons */}
-                      <div className="flex items-center gap-1">
-                        {[10, 15, 20, 25, 30, 40, 50].map((pct) => {
-                          const currentPct = customDiscounts[rec.id] ?? rec.recommendedDiscountPercent ?? 20;
-                          const isSelected = currentPct === pct;
-                          return (
-                            <button
-                              key={pct}
-                              onClick={() => setCustomDiscounts((prev) => ({ ...prev, [rec.id]: pct }))}
-                              className={`px-2.5 py-1 rounded-lg font-black text-xs transition ${
-                                isSelected
-                                  ? 'bg-indigo-600 text-white shadow-xs'
-                                  : 'bg-slate-50 border border-slate-200 text-slate-700 hover:bg-indigo-50'
-                              }`}
-                            >
-                              {pct}%
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      {/* Manual input */}
-                      <div className="flex items-center gap-1 pl-2 border-l border-slate-200">
-                        <input
-                          type="number"
-                          min="5"
-                          max="80"
-                          value={customDiscounts[rec.id] ?? rec.recommendedDiscountPercent ?? 20}
-                          onChange={(e) => {
-                            const val = Math.min(80, Math.max(5, Number(e.target.value)));
-                            setCustomDiscounts((prev) => ({ ...prev, [rec.id]: val }));
-                          }}
-                          className="w-12 px-1.5 py-0.5 bg-slate-50 border border-slate-300 rounded text-center font-black text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                        />
-                        <span className="font-bold text-slate-600">% OFF</span>
-                      </div>
+                    <div className={`flex items-center gap-3 bg-white p-2 rounded-xl border ${isCombo ? 'border-purple-200' : 'border-indigo-200'} shadow-xs`}>
+                      {isCombo ? (
+                        <>
+                          <div className="flex items-center gap-1">
+                            {[300, 320, 350, 380].map((prc) => {
+                              const isSelected = activeComboPrice === prc;
+                              return (
+                                <button
+                                  key={prc}
+                                  onClick={() => setCustomComboPrices((prev) => ({ ...prev, [rec.id]: prc }))}
+                                  className={`px-2.5 py-1 rounded-lg font-black text-xs transition ${
+                                    isSelected
+                                      ? 'bg-purple-600 text-white shadow-xs'
+                                      : 'bg-slate-50 border border-slate-200 text-slate-700 hover:bg-purple-50'
+                                  }`}
+                                >
+                                  ¥{prc}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="flex items-center gap-1 pl-2 border-l border-slate-200">
+                            <span className="font-bold text-slate-500">¥</span>
+                            <input
+                              type="number"
+                              min="200"
+                              max="600"
+                              value={activeComboPrice}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setCustomComboPrices((prev) => ({ ...prev, [rec.id]: val }));
+                              }}
+                              className="w-16 px-1.5 py-0.5 bg-slate-50 border border-slate-300 rounded text-center font-black text-slate-900 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-1">
+                            {[10, 15, 20, 25, 30, 40, 50].map((pct) => {
+                              const isSelected = activeDiscount === pct;
+                              return (
+                                <button
+                                  key={pct}
+                                  onClick={() => setCustomDiscounts((prev) => ({ ...prev, [rec.id]: pct }))}
+                                  className={`px-2.5 py-1 rounded-lg font-black text-xs transition ${
+                                    isSelected
+                                      ? 'bg-indigo-600 text-white shadow-xs'
+                                      : 'bg-slate-50 border border-slate-200 text-slate-700 hover:bg-indigo-50'
+                                  }`}
+                                >
+                                  {pct}%
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="flex items-center gap-1 pl-2 border-l border-slate-200">
+                            <input
+                              type="number"
+                              min="5"
+                              max="80"
+                              value={activeDiscount}
+                              onChange={(e) => {
+                                const val = Math.min(80, Math.max(5, Number(e.target.value)));
+                                setCustomDiscounts((prev) => ({ ...prev, [rec.id]: val }));
+                              }}
+                              className="w-12 px-1.5 py-0.5 bg-slate-50 border border-slate-300 rounded text-center font-black text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            />
+                            <span className="font-bold text-slate-600">% OFF</span>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 )}
@@ -326,14 +396,19 @@ export default function AiRecommendationsPage() {
                       <button
                         disabled={processingId === rec.id}
                         onClick={() => {
-                          const activeDiscount = customDiscounts[rec.id] ?? rec.recommendedDiscountPercent ?? 20;
-                          handleApprove(rec.id, rec.recommendedAction, activeDiscount);
+                          if (isCombo) {
+                            handleApprove(rec.id, rec.recommendedAction, undefined, activeComboPrice);
+                          } else {
+                            handleApprove(rec.id, rec.recommendedAction, activeDiscount, undefined);
+                          }
                         }}
-                        className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-black rounded-xl shadow-md transition flex items-center gap-1.5 active:scale-95"
+                        className={`px-6 py-2 ${isCombo ? 'bg-purple-600 hover:bg-purple-500' : 'bg-emerald-600 hover:bg-emerald-500'} text-white font-black rounded-xl shadow-md transition flex items-center gap-1.5 active:scale-95`}
                       >
                         <CheckCircle2 className="w-4 h-4 text-white" />
                         <span>
-                          {customDiscounts[rec.id] ?? rec.recommendedDiscountPercent ?? 20}% OFF で承認して有効化
+                          {isCombo
+                            ? `コンボ ¥${activeComboPrice.toLocaleString()} で承認して配信`
+                            : `${activeDiscount}% OFF で承認して有効化`}
                         </span>
                       </button>
                     </div>

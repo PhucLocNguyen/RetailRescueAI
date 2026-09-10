@@ -8,9 +8,13 @@ using RetailRescueAI.Backend.Repositories.Implementations;
 using RetailRescueAI.Backend.Repositories.Interfaces;
 using RetailRescueAI.Backend.Services.AI;
 using RetailRescueAI.Backend.Services.AI.Agents;
+using RetailRescueAI.Backend.Services.AI.Plugins;
+using RetailRescueAI.Backend.Services.AI.SemanticKernel;
 using RetailRescueAI.Backend.Services.BackgroundJobs;
 using RetailRescueAI.Backend.Services.Implementations;
 using RetailRescueAI.Backend.Services.Interfaces;
+using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.ChatCompletion;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -95,11 +99,32 @@ builder.Services.AddScoped<IAiRecommendationService, AiRecommendationService>();
 builder.Services.AddScoped<IChatbotService, ChatbotService>();
 builder.Services.AddScoped<IResultService, ResultService>();
 
-// 8. AI Multi-Agent Layer
+// 8. AI Multi-Agent Layer (Microsoft Semantic Kernel)
 builder.Services.AddHttpClient<GeminiLLMService>();
 builder.Services.AddSingleton<MockLLMService>();
 builder.Services.AddScoped<ILLMService, GeminiLLMService>();
 
+// Register Semantic Kernel IChatCompletionService bridged to ILLMService
+builder.Services.AddScoped<IChatCompletionService, SemanticKernelChatCompletionService>();
+
+// Register Semantic Kernel Native Plugins
+builder.Services.AddScoped<InventoryDataPlugin>();
+builder.Services.AddScoped<SalesVelocityPlugin>();
+builder.Services.AddScoped<SafetyGuardrailPlugin>();
+builder.Services.AddScoped<ComboStrategyPlugin>();
+
+// Register Semantic Kernel with DI and Native Plugins
+builder.Services.AddScoped<Kernel>(sp =>
+{
+    var kernel = new Kernel(sp);
+    kernel.Plugins.AddFromObject(sp.GetRequiredService<InventoryDataPlugin>(), "InventoryDataPlugin");
+    kernel.Plugins.AddFromObject(sp.GetRequiredService<SalesVelocityPlugin>(), "SalesVelocityPlugin");
+    kernel.Plugins.AddFromObject(sp.GetRequiredService<SafetyGuardrailPlugin>(), "SafetyGuardrailPlugin");
+    kernel.Plugins.AddFromObject(sp.GetRequiredService<ComboStrategyPlugin>(), "ComboStrategyPlugin");
+    return kernel;
+});
+
+// Register Specialized AI Agents
 builder.Services.AddScoped<ExpiryAgent>();
 builder.Services.AddScoped<SalesAgent>();
 builder.Services.AddScoped<PromotionAgent>();

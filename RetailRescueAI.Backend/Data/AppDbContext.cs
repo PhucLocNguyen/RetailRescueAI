@@ -89,6 +89,18 @@ public class AppDbContext : DbContext
             .HasForeignKey(pc => pc.PromotionId)
             .OnDelete(DeleteBehavior.Cascade);
 
+        modelBuilder.Entity<Promotion>()
+            .HasOne(p => p.ComboProduct)
+            .WithMany()
+            .HasForeignKey(p => p.ComboProductId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        modelBuilder.Entity<AIRecommendation>()
+            .HasOne(r => r.ComboProduct)
+            .WithMany()
+            .HasForeignKey(r => r.ComboProductId)
+            .OnDelete(DeleteBehavior.NoAction);
+
         modelBuilder.Entity<AIRecommendation>()
             .HasOne(r => r.TargetProduct)
             .WithMany()

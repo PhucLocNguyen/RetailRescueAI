@@ -24,8 +24,18 @@ public class ExpiryAiScheduledWorker : BackgroundService
         _logger.LogInformation("[ExpiryAiScheduledWorker] AI Background Scheduler Service initialized.");
         _logger.LogInformation("=================================================");
 
-        // Wait a few seconds after application startup before initial run
-        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+        int intervalMinutes = _configuration.GetValue<int>("Scheduler:IntervalMinutes", 180);
+        bool runOnStartup = _configuration.GetValue<bool>("Scheduler:RunOnStartup", false);
+
+        if (runOnStartup)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+        }
+        else
+        {
+            _logger.LogInformation("[ExpiryAiScheduledWorker] Standby mode: Waiting for manager to trigger AI analysis or next scheduled run in {Minutes} minutes.", intervalMinutes);
+            await Task.Delay(TimeSpan.FromMinutes(intervalMinutes), stoppingToken);
+        }
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -44,8 +54,7 @@ public class ExpiryAiScheduledWorker : BackgroundService
                 _logger.LogError(ex, "[ExpiryAiScheduledWorker] Error during scheduled AI execution.");
             }
 
-            // Read interval from config (default to 180 minutes = 3 hours, but allows 5 or 10 min for dev)
-            int intervalMinutes = _configuration.GetValue<int>("Scheduler:IntervalMinutes", 180);
+            intervalMinutes = _configuration.GetValue<int>("Scheduler:IntervalMinutes", 180);
             _logger.LogInformation("[ExpiryAiScheduledWorker] Next execution in {Minutes} minutes.", intervalMinutes);
 
             await Task.Delay(TimeSpan.FromMinutes(intervalMinutes), stoppingToken);

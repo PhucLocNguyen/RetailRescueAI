@@ -14,6 +14,7 @@ public class PosService : IPosService
     private readonly ISaleRepository _saleRepository;
     private readonly ICustomerRepository _customerRepository;
     private readonly IUserRepository _userRepository;
+    private readonly ILogger<PosService> _logger;
 
     public PosService(
         IPromotionRepository promotionRepository,
@@ -22,7 +23,8 @@ public class PosService : IPosService
         IInventoryBatchRepository batchRepository,
         ISaleRepository saleRepository,
         ICustomerRepository customerRepository,
-        IUserRepository userRepository)
+        IUserRepository userRepository,
+        ILogger<PosService> logger)
     {
         _promotionRepository = promotionRepository;
         _productRepository = productRepository;
@@ -31,6 +33,7 @@ public class PosService : IPosService
         _saleRepository = saleRepository;
         _customerRepository = customerRepository;
         _userRepository = userRepository;
+        _logger = logger;
     }
 
     public async Task<PosRecommendationResponse> GetRecommendationsForCartAsync(
@@ -99,6 +102,80 @@ public class PosService : IPosService
                             FinalPrice: finalPrice,
                             Message: $"🏷️ 値引きシール対象：{targetProduct.Name} ({targetBatch.BatchCode}) が {discountPct:F0}% OFF！",
                             ActionPrompt: $"「{targetProduct.Name} の見切り品（ロット: {targetBatch.BatchCode}）が {discountPct:F0}% 引でお買い得です。いかがでしょうか？」"
+                        ));
+                    }
+                }
+            }
+            else if (promo.PromotionType == "BUNDLE_COMBO" && promo.TargetProductId.HasValue && promo.TargetBatchId.HasValue)
+            {
+                var targetProduct = promo.TargetProduct;
+                var targetBatch = promo.TargetBatch;
+                var comboProduct = promo.ComboProduct ?? (promo.ComboProductId.HasValue ? await _productRepository.GetByIdAsync(promo.ComboProductId.Value, cancellationToken) : null);
+
+                if (targetProduct != null && targetBatch != null && comboProduct != null)
+                {
+                    if (targetBatch.ExpiryDate <= now || targetBatch.RemainingQuantity <= 0)
+                    {
+                        continue;
+                    }
+
+                    bool isMainBatchInCart = request.BatchIdsInCart != null && request.BatchIdsInCart.Contains(targetBatch.Id);
+                    bool isMainProductInCart = request.ProductIdsInCart != null && request.ProductIdsInCart.Contains(targetProduct.Id);
+                    bool isPartnerInCart = request.ProductIdsInCart != null && request.ProductIdsInCart.Contains(comboProduct.Id);
+
+                    decimal comboPrice = promo.ComboPrice ?? 350m;
+                    decimal totalNormal = targetProduct.Price + comboProduct.Price;
+                    decimal savings = promo.ComboDiscountAmount ?? (totalNormal - comboPrice);
+                    if (savings <= 0) savings = 70m;
+
+                    // Condition 1: Main product/batch is in cart, Partner is NOT yet in cart -> AI UPSELL SUGGESTION!
+                    if ((isMainBatchInCart || isMainProductInCart) && !isPartnerInCart)
+                    {
+                        recommendations.Add(new PosRecommendationItemDto(
+                            PromotionId: promo.Id,
+                            PromotionCode: promo.PromotionCode,
+                            PromotionName: promo.Name,
+                            PromotionType: "BUNDLE_COMBO",
+                            TargetProductId: targetProduct.Id,
+                            TargetProductName: targetProduct.Name,
+                            TargetBatchId: targetBatch.Id,
+                            TargetBatchCode: targetBatch.BatchCode,
+                            ExpiryDate: targetBatch.ExpiryDate,
+                            OriginalPrice: totalNormal,
+                            DiscountPercent: Math.Round(savings / totalNormal * 100, 0),
+                            FinalPrice: comboPrice,
+                            Message: $"🥪🍵 【AI接客アシスト】{comboProduct.Name} を追加するとセット価格 ¥{comboPrice:N0}（¥{savings:N0}お得！）",
+                            ActionPrompt: $"「お客様、ご一緒に『{comboProduct.Name}』はいかがでしょうか？ただいまサンドイッチとセットで通常¥{totalNormal:N0}のところ、¥{comboPrice:N0}（¥{savings:N0}お得）でお買い求めいただけます！」",
+                            ComboProductId: comboProduct.Id,
+                            ComboProductName: comboProduct.Name,
+                            ComboPrice: comboPrice,
+                            SavingsAmount: savings,
+                            StaffScript: $"「お客様、ご一緒に『{comboProduct.Name}』はいかがでしょうか？ただいまセットで通常¥{totalNormal:N0}のところ、¥{comboPrice:N0}（¥{savings:N0}お得）でお買い求めいただけます！」"
+                        ));
+                    }
+                    // Condition 2: BOTH items in cart -> Combo Activated notification!
+                    else if ((isMainBatchInCart || isMainProductInCart) && isPartnerInCart)
+                    {
+                        recommendations.Add(new PosRecommendationItemDto(
+                            PromotionId: promo.Id,
+                            PromotionCode: promo.PromotionCode,
+                            PromotionName: promo.Name,
+                            PromotionType: "BUNDLE_COMBO_APPLIED",
+                            TargetProductId: targetProduct.Id,
+                            TargetProductName: targetProduct.Name,
+                            TargetBatchId: targetBatch.Id,
+                            TargetBatchCode: targetBatch.BatchCode,
+                            ExpiryDate: targetBatch.ExpiryDate,
+                            OriginalPrice: totalNormal,
+                            DiscountPercent: Math.Round(savings / totalNormal * 100, 0),
+                            FinalPrice: comboPrice,
+                            Message: $"🎉 【ランチコンボ適用中】{targetProduct.Name}＋{comboProduct.Name} セット割引（¥{savings:N0}引き）が適用されています！",
+                            ActionPrompt: "セット割引が自動適用されました。",
+                            ComboProductId: comboProduct.Id,
+                            ComboProductName: comboProduct.Name,
+                            ComboPrice: comboPrice,
+                            SavingsAmount: savings,
+                            StaffScript: "セット割引が自動適用されました。"
                         ));
                     }
                 }
@@ -203,8 +280,8 @@ public class PosService : IPosService
                     );
                 }
 
-                // Anti-fraud: Promotion target batch must strictly match the item's batch!
-                if (promo.TargetBatchId.HasValue && promo.TargetBatchId.Value != batch.Id)
+                // Anti-fraud: Promotion target batch must strictly match the item's batch (or be valid combo partner)!
+                if (promo.TargetBatchId.HasValue && promo.TargetBatchId.Value != batch.Id && promo.ComboProductId != product.Id)
                 {
                     return new CheckoutResponse(
                         Success: false,
@@ -272,13 +349,60 @@ public class PosService : IPosService
             _batchRepository.Update(batch);
 
             decimal itemDiscount = 0m;
-            if (itemReq.AppliedPromotionId.HasValue)
+            int? effectivePromoId = itemReq.AppliedPromotionId;
+            if (!effectivePromoId.HasValue)
             {
-                var promo = await _promotionRepository.GetByIdAsync(itemReq.AppliedPromotionId.Value, cancellationToken);
-                if (promo != null && promo.Status == "APPROVED" && promo.TargetBatchId == batch.Id)
+                var activePromos = await _promotionRepository.GetActivePromotionsAsync(now, cancellationToken);
+
+                // 1) Check BUNDLE_COMBO where this batch is target and partner product is also in the checkout request!
+                var comboPromo = activePromos.FirstOrDefault(p =>
+                    p.PromotionType == "BUNDLE_COMBO" &&
+                    p.TargetBatchId == batch.Id &&
+                    p.Status == "APPROVED" &&
+                    p.StartTime <= now &&
+                    p.EndTime >= now &&
+                    p.ComboProductId.HasValue &&
+                    request.Items.Any(i => i.ProductId == p.ComboProductId.Value));
+
+                if (comboPromo != null)
                 {
-                    decimal pct = promo.DiscountPercent ?? 0m;
-                    itemDiscount = Math.Round(product.Price * (pct / 100m) * itemReq.Quantity, 0);
+                    effectivePromoId = comboPromo.Id;
+                }
+                else
+                {
+                    // 2) Check DIRECT_DISCOUNT for this batch
+                    var batchPromo = activePromos.FirstOrDefault(p =>
+                        p.PromotionType == "DIRECT_DISCOUNT" &&
+                        p.TargetBatchId == batch.Id &&
+                        p.Status == "APPROVED" &&
+                        p.StartTime <= now &&
+                        p.EndTime >= now);
+
+                    if (batchPromo != null)
+                    {
+                        effectivePromoId = batchPromo.Id;
+                    }
+                }
+            }
+
+            if (effectivePromoId.HasValue)
+            {
+                var promo = await _promotionRepository.GetByIdAsync(effectivePromoId.Value, cancellationToken);
+                if (promo != null && promo.Status == "APPROVED")
+                {
+                    if (promo.PromotionType == "BUNDLE_COMBO" && promo.TargetBatchId == batch.Id)
+                    {
+                        // Apply combo savings on this combo line
+                        decimal savings = promo.ComboDiscountAmount ?? 70m;
+                        var partnerItem = request.Items.FirstOrDefault(i => i.ProductId == promo.ComboProductId);
+                        int comboQuantity = partnerItem != null ? Math.Min(itemReq.Quantity, partnerItem.Quantity) : itemReq.Quantity;
+                        itemDiscount = savings * comboQuantity;
+                    }
+                    else if (promo.TargetBatchId == batch.Id && promo.DiscountPercent.HasValue)
+                    {
+                        decimal pct = promo.DiscountPercent.Value;
+                        itemDiscount = Math.Round(product.Price * (pct / 100m) * itemReq.Quantity, 0);
+                    }
                 }
             }
 
@@ -302,9 +426,19 @@ public class PosService : IPosService
 
             sale.Items.Add(saleItem);
 
+            _logger.LogInformation(
+                "[PosService] Scanned Barcode '{Barcode}': Deducted {Quantity} units directly from Lot {BatchCode} (ID: {BatchId}) for Product '{ProductName}'. Lot remaining stock: {Remaining}.",
+                itemReq.ScannedBarcode ?? product.Barcode,
+                itemReq.Quantity,
+                batch.BatchCode,
+                batch.Id,
+                product.Name,
+                batch.RemainingQuantity);
+
             receiptItems.Add(new ReceiptItemDto(
                 ProductName: product.Name,
                 BatchCode: batch.BatchCode,
+                Barcode: itemReq.ScannedBarcode ?? product.Barcode,
                 Quantity: itemReq.Quantity,
                 UnitPrice: product.Price,
                 DiscountAmount: itemDiscount,
@@ -356,6 +490,178 @@ public class PosService : IPosService
     public async Task<List<Customer>> GetCustomersAsync(CancellationToken cancellationToken = default)
     {
         return await _customerRepository.GetAllCustomersAsync(cancellationToken);
+    }
+
+    public async Task<PosScanResultDto> ScanBarcodeAsync(string barcode, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(barcode))
+        {
+            return new PosScanResultDto(
+                Success: false,
+                Message: "バーコードが入力されていません。",
+                ProductId: null,
+                ProductName: null,
+                Barcode: null,
+                BatchId: null,
+                BatchCode: null,
+                RemainingQuantity: null,
+                Price: 0,
+                IsDiscounted: false,
+                DiscountPercent: null,
+                FinalPrice: null,
+                PromotionId: null,
+                PromotionName: null,
+                IsExpired: false
+            );
+        }
+
+        var cleanCode = barcode.Trim();
+        var now = DateTime.UtcNow;
+
+        // 1. Direct BatchCode Match (e.g. BATCH-SAND-001, BATCH-SAND-002)
+        var batchByCode = await _batchRepository.GetByBatchCodeAsync(cleanCode, cancellationToken);
+        if (batchByCode != null)
+        {
+            var product = batchByCode.Product ?? await _productRepository.GetByIdAsync(batchByCode.ProductId, cancellationToken);
+            return await BuildScanResultAsync(batchByCode, product, cleanCode, now, cancellationToken);
+        }
+
+        // 2. Discount Sticker Match (e.g. STICKER-BATCH-SAND-001, STICKER-SAND-001)
+        if (cleanCode.StartsWith("STICKER-", StringComparison.OrdinalIgnoreCase) || cleanCode.StartsWith("DISCOUNT-", StringComparison.OrdinalIgnoreCase))
+        {
+            var rawSuffix = cleanCode.Replace("STICKER-", "", StringComparison.OrdinalIgnoreCase)
+                                     .Replace("DISCOUNT-", "", StringComparison.OrdinalIgnoreCase).Trim();
+
+            var allBatches = await _batchRepository.GetAllBatchesWithProductAsync(cancellationToken);
+            var activePromos = await _promotionRepository.GetActivePromotionsAsync(now, cancellationToken);
+            var discountedBatchIds = activePromos.Where(p => p.Status == "APPROVED" && p.TargetBatchId.HasValue)
+                                                .Select(p => p.TargetBatchId!.Value)
+                                                .ToHashSet();
+
+            // First: Try exact batch code match with or without BATCH- prefix
+            var matchedBatch = allBatches.FirstOrDefault(b => 
+                b.BatchCode.Equals(rawSuffix, StringComparison.OrdinalIgnoreCase) ||
+                b.BatchCode.Equals($"BATCH-{rawSuffix}", StringComparison.OrdinalIgnoreCase) ||
+                cleanCode.Contains(b.BatchCode, StringComparison.OrdinalIgnoreCase));
+
+            // Second: If matched by product code (e.g. STICKER-SAND-001), find the active discounted non-expired batch for that product!
+            if (matchedBatch == null)
+            {
+                matchedBatch = allBatches
+                    .Where(b => b.ExpiryDate > now && b.Product != null &&
+                               (b.Product.ProductCode.Equals(rawSuffix, StringComparison.OrdinalIgnoreCase) ||
+                                cleanCode.Contains(b.Product.ProductCode, StringComparison.OrdinalIgnoreCase)))
+                    .OrderByDescending(b => discountedBatchIds.Contains(b.Id)) // prefer discounted batch
+                    .ThenBy(b => b.ExpiryDate) // then nearest expiry
+                    .FirstOrDefault();
+            }
+
+            if (matchedBatch != null)
+            {
+                return await BuildScanResultAsync(matchedBatch, matchedBatch.Product, cleanCode, now, cancellationToken);
+            }
+        }
+
+        // 3. Product JAN Barcode or Product Code Match
+        var allProducts = await _productRepository.GetAllAsync(cancellationToken);
+        var matchedProduct = allProducts.FirstOrDefault(p =>
+            p.Barcode.Equals(cleanCode, StringComparison.OrdinalIgnoreCase) ||
+            p.ProductCode.Equals(cleanCode, StringComparison.OrdinalIgnoreCase));
+
+        if (matchedProduct != null)
+        {
+            var productBatches = await _batchRepository.GetAvailableBatchesForProductFefoAsync(matchedProduct.Id, cancellationToken);
+            var nonExpiredBatches = productBatches.Where(b => b.ExpiryDate > now).ToList();
+
+            // When standard JAN is scanned, prefer the regular (fresh, non-discounted) batch, or earliest valid batch
+            var regularBatch = nonExpiredBatches.FirstOrDefault(b => b.Status == "AVAILABLE") ?? nonExpiredBatches.FirstOrDefault();
+
+            if (regularBatch != null)
+            {
+                return await BuildScanResultAsync(regularBatch, matchedProduct, cleanCode, now, cancellationToken);
+            }
+
+            return new PosScanResultDto(
+                Success: false,
+                Message: $"商品「{matchedProduct.Name}」は現在有効なロット在庫がありません（完売または賞味期限切れ）。",
+                ProductId: matchedProduct.Id,
+                ProductName: matchedProduct.Name,
+                Barcode: matchedProduct.Barcode,
+                BatchId: null,
+                BatchCode: null,
+                RemainingQuantity: 0,
+                Price: matchedProduct.Price,
+                IsDiscounted: false,
+                DiscountPercent: null,
+                FinalPrice: matchedProduct.Price,
+                PromotionId: null,
+                PromotionName: null,
+                IsExpired: true
+            );
+        }
+
+        return new PosScanResultDto(
+            Success: false,
+            Message: $"バーコード「{cleanCode}」に一致する商品・ロットが見つかりませんでした。",
+            ProductId: null,
+            ProductName: null,
+            Barcode: cleanCode,
+            BatchId: null,
+            BatchCode: null,
+            RemainingQuantity: null,
+            Price: 0,
+            IsDiscounted: false,
+            DiscountPercent: null,
+            FinalPrice: null,
+            PromotionId: null,
+            PromotionName: null,
+            IsExpired: false
+        );
+    }
+
+    private async Task<PosScanResultDto> BuildScanResultAsync(
+        InventoryBatch batch,
+        Product? product,
+        string scannedCode,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var prod = product ?? batch.Product;
+        var price = prod?.Price ?? 0m;
+        bool isExpired = batch.ExpiryDate <= now;
+
+        var activePromos = await _promotionRepository.GetActivePromotionsAsync(now, cancellationToken);
+        var batchPromo = activePromos.FirstOrDefault(p => p.TargetBatchId == batch.Id && p.Status == "APPROVED");
+
+        bool isDiscounted = batchPromo != null && !isExpired;
+        decimal? discountPct = isDiscounted ? batchPromo?.DiscountPercent : null;
+        decimal? finalPrice = isDiscounted && discountPct.HasValue
+            ? Math.Round(price * (1m - discountPct.Value / 100m), 0)
+            : price;
+
+        string message = isExpired
+            ? $"⛔ 【販売不可】ロット「{batch.BatchCode}」は賞味期限が切れています！店頭から撤去してください（Rule 7: 期限切れ販売禁止）。"
+            : isDiscounted
+                ? $"✅ 【値引きシール適用】「{prod?.Name}」(ロット: {batch.BatchCode}) が {discountPct}% OFF で読み取られました。"
+                : $"✅ 【スキャン完了】「{prod?.Name}」(ロット: {batch.BatchCode}) を読み取りました。";
+
+        return new PosScanResultDto(
+            Success: !isExpired,
+            Message: message,
+            ProductId: prod?.Id,
+            ProductName: prod?.Name,
+            Barcode: scannedCode,
+            BatchId: batch.Id,
+            BatchCode: batch.BatchCode,
+            RemainingQuantity: batch.RemainingQuantity,
+            Price: price,
+            IsDiscounted: isDiscounted,
+            DiscountPercent: discountPct,
+            FinalPrice: finalPrice,
+            PromotionId: batchPromo?.Id,
+            PromotionName: batchPromo?.Name,
+            IsExpired: isExpired
+        );
     }
 }
 

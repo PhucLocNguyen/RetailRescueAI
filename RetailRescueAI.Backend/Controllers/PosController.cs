@@ -44,4 +44,13 @@ public class PosController : ControllerBase
         var customers = await _posService.GetCustomersAsync(cancellationToken);
         return Ok(customers);
     }
+
+    [HttpGet("scan")]
+    public async Task<ActionResult<PosScanResultDto>> ScanBarcode(
+        [FromQuery] string barcode,
+        CancellationToken cancellationToken)
+    {
+        var result = await _posService.ScanBarcodeAsync(barcode, cancellationToken);
+        return Ok(result);
+    }
 }

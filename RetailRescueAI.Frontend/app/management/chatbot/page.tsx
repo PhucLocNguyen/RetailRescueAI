@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { sendChatMessage } from '@/lib/api';
+import { sendChatMessage, createPromotion } from '@/lib/api';
 import {
   MessageSquareText,
   Send,
@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   Tag,
   ArrowRight,
+  Clock,
 } from 'lucide-react';
 
 interface Message {
@@ -24,11 +25,13 @@ export default function ManagerChatbotPage() {
     {
       role: 'assistant',
       content:
-        '佐藤店長、お疲れ様です！RetailRescue AI アシスタントです。\n現在庫データや賞味期限、売上予測に基づき、プロモーションの策定をお手伝いします。\n\n「チキン弁当の在庫と割引を相談したい」「本日の危険な商品は？」など、何でもお気軽に相談してください。',
+        '佐藤店長、お疲れ様です！RetailRescue AI アシスタントです。\n現在庫データや賞味期限、売上予測に基づき、プロモーションの策定をお手伝いします。\n\n「たまごサンドを30%引きにしたい」「チキン弁当の在庫と割引を相談したい」「本日の危険な商品は？」など、何でもお気軽に相談してください。',
     },
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [creatingPromoName, setCreatingPromoName] = useState<string | null>(null);
+  const [registeredPromoNames, setRegisteredPromoNames] = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -72,9 +75,31 @@ export default function ManagerChatbotPage() {
   }
 
   async function handleCreateProposedPromo(promo: any) {
-    alert(
-      `提案「${promo.name}」を【承認待ち（PENDING）】として登録しました。\n「AIプロモーション提案」または「プロモーション管理」画面で内容をご確認の上、承認してください。`
-    );
+    if (registeredPromoNames.has(promo.name) || creatingPromoName === promo.name) return;
+
+    setCreatingPromoName(promo.name);
+    try {
+      await createPromotion({
+        name: promo.name,
+        promotionType: promo.promotionType || 'DIRECT_DISCOUNT',
+        targetProductId: promo.targetProductId,
+        targetBatchId: promo.targetBatchId,
+        discountPercent: promo.discountPercent,
+        comboPrice: promo.comboPrice,
+        startTime: promo.startTime || new Date().toISOString(),
+        endTime: promo.endTime || new Date(Date.now() + 6 * 3600 * 1000).toISOString(),
+        reasoning: promo.reasoning,
+      });
+
+      setRegisteredPromoNames((prev) => new Set(prev).add(promo.name));
+      alert(
+        `✅ プロモーション「${promo.name}」を【承認待ち（PENDING）】として正式登録しました！\n\n「プロモーション管理」画面または「AI提案」画面にてご確認の上、店長承認を行うことでレジへ即時反映されます。`
+      );
+    } catch (err: any) {
+      alert(`登録に失敗しました: ${err.message || err}`);
+    } finally {
+      setCreatingPromoName(null);
+    }
   }
 
   return (
@@ -154,11 +179,24 @@ export default function ManagerChatbotPage() {
                     </div>
 
                     <button
+                      disabled={registeredPromoNames.has(m.proposedPromotion.name) || creatingPromoName === m.proposedPromotion.name}
                       onClick={() => handleCreateProposedPromo(m.proposedPromotion)}
-                      className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow transition flex items-center justify-center gap-2"
+                      className={`w-full py-2.5 font-bold text-xs rounded-xl shadow transition flex items-center justify-center gap-2 ${
+                        registeredPromoNames.has(m.proposedPromotion.name)
+                          ? 'bg-emerald-600 text-white cursor-default'
+                          : creatingPromoName === m.proposedPromotion.name
+                          ? 'bg-indigo-400 text-white cursor-wait'
+                          : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                      }`}
                     >
                       <CheckCircle2 className="w-4 h-4" />
-                      <span>このプロモーションを「承認待ち」として登録する</span>
+                      <span>
+                        {registeredPromoNames.has(m.proposedPromotion.name)
+                          ? '✓ 登録完了（承認待ちリストに追加済み）'
+                          : creatingPromoName === m.proposedPromotion.name
+                          ? '登録処理中...'
+                          : 'このプロモーションを「承認待ち」として登録する'}
+                      </span>
                     </button>
                     <p className="text-[10px] text-center text-slate-500">
                       ※ AIは直接有効化しません。店長ポータルで承認後にレジへ反映されます。
@@ -185,9 +223,10 @@ export default function ManagerChatbotPage() {
       {/* Suggested Quick Prompt Chips */}
       <div className="flex flex-wrap gap-2 text-xs">
         {[
+          'たまごサンドを30%引きにしたい',
           'チキン南蛮弁当の在庫状況と割引を提案して',
+          '特選ロースかつ丼の夕方プロモーションは？',
           '本日の賞味期限切迫商品はどれですか？',
-          '夕方のピーク時間帯に最適なプロモーションは？',
         ].map((chip, idx) => (
           <button
             key={idx}

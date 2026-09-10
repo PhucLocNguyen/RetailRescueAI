@@ -1,5 +1,7 @@
+using System.Text.Json;
+using Microsoft.SemanticKernel;
 using RetailRescueAI.Backend.Models;
-using RetailRescueAI.Backend.Repositories.Interfaces;
+using RetailRescueAI.Backend.Services.AI.Plugins;
 
 namespace RetailRescueAI.Backend.Services.AI.Agents;
 
@@ -14,14 +16,23 @@ public record SalesAnalysisResult(
     string FinalEvaluatedRiskLevel // Escalates if velocity cannot clear stock
 );
 
+/// <summary>
+/// Semantic Kernel Agent responsible for calculating sales velocity,
+/// clearance projections, and potential waste financial loss.
+/// </summary>
 public class SalesAgent
 {
-    private readonly ISaleRepository _saleRepository;
+    private readonly Kernel _kernel;
+    private readonly SalesVelocityPlugin _salesPlugin;
     private readonly ILogger<SalesAgent> _logger;
 
-    public SalesAgent(ISaleRepository saleRepository, ILogger<SalesAgent> logger)
+    public string Name => "SalesVelocityAgent";
+    public string RoleTitle => "販売速度・廃棄予測エージェント (Semantic Kernel)";
+
+    public SalesAgent(Kernel kernel, SalesVelocityPlugin salesPlugin, ILogger<SalesAgent> logger)
     {
-        _saleRepository = saleRepository;
+        _kernel = kernel;
+        _salesPlugin = salesPlugin;
         _logger = logger;
     }
 
@@ -30,34 +41,44 @@ public class SalesAgent
         DateTime currentReferenceTime,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("[SalesAgent] Analyzing sales velocity and expected clearance...");
+        _logger.LogInformation("[{Agent}] Analyzing sales velocity and clearance via Semantic Kernel...", Name);
 
         var results = new List<SalesAnalysisResult>();
-
-        // Analyze last 7 days of sales for each product
-        var sevenDaysAgo = currentReferenceTime.AddDays(-7);
-        var recentSaleItems = await _saleRepository.GetRecentSaleItemsAsync(sevenDaysAgo, cancellationToken);
 
         foreach (var exp in expiryResults)
         {
             var batch = exp.Batch;
             var product = batch.Product!;
 
-            // Calculate product's sales in last 7 days
-            var productSoldUnits = recentSaleItems
-                .Where(si => si.ProductId == product.Id)
-                .Sum(si => si.Quantity);
+            // Calculate daily velocity via SalesVelocityPlugin
+            decimal avgDailySales = await _salesPlugin.CalculateDailySalesVelocityAsync(product.Id, 7, cancellationToken);
 
-            // Average daily sales (default to 10 if new)
-            decimal avgDailySales = productSoldUnits > 0 ? Math.Round((decimal)productSoldUnits / 7.0m, 1) : 10.0m;
+            // Forecast clearance and potential waste
+            string forecastJson = _salesPlugin.ForecastClearanceAndWaste(
+                batch.RemainingQuantity,
+                avgDailySales,
+                exp.HoursUntilExpiry,
+                product.Price
+            );
 
-            // Estimated normal sales until expiry
-            var daysRemaining = (decimal)Math.Max(0, exp.HoursUntilExpiry) / 24.0m;
-            var estimatedNormalSales = (int)Math.Floor(avgDailySales * daysRemaining);
+            int estimatedNormalSales = 0;
+            int potentialWasteUnits = 0;
+            decimal potentialWasteCost = 0m;
 
-            // Potential waste
-            var potentialWasteUnits = Math.Max(0, batch.RemainingQuantity - estimatedNormalSales);
-            var potentialWasteCost = potentialWasteUnits * product.Price;
+            try
+            {
+                using var doc = JsonDocument.Parse(forecastJson);
+                estimatedNormalSales = doc.RootElement.GetProperty("estimatedNormalSales").GetInt32();
+                potentialWasteUnits = doc.RootElement.GetProperty("potentialWasteUnits").GetInt32();
+                potentialWasteCost = doc.RootElement.GetProperty("potentialWasteFinancialLoss").GetDecimal();
+            }
+            catch
+            {
+                var daysRemaining = (decimal)Math.Max(0, exp.HoursUntilExpiry) / 24.0m;
+                estimatedNormalSales = (int)Math.Floor(avgDailySales * daysRemaining);
+                potentialWasteUnits = Math.Max(0, batch.RemainingQuantity - estimatedNormalSales);
+                potentialWasteCost = potentialWasteUnits * product.Price;
+            }
 
             // Determine if risk escalates due to slow velocity
             string finalRisk = exp.RiskLevel;
@@ -65,9 +86,9 @@ public class SalesAgent
             {
                 finalRisk = "CRITICAL";
             }
-            else if (potentialWasteUnits > 0 && exp.HoursUntilExpiry <= 36)
+            else if (potentialWasteUnits > 0 && exp.RiskLevel == "MEDIUM" && exp.HoursUntilExpiry <= 36)
             {
-                if (finalRisk == "LOW" || finalRisk == "MEDIUM") finalRisk = "AT_RISK";
+                finalRisk = "AT_RISK";
             }
 
             results.Add(new SalesAnalysisResult(
@@ -85,4 +106,3 @@ public class SalesAgent
         return results;
     }
 }
-

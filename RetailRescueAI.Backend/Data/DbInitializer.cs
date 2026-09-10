@@ -401,47 +401,6 @@ public static class DbInitializer
         };
         context.PromotionResults.Add(prevResult);
 
-        // 9. Active Approved Promotions for Live Demo (Rules 3, 6, 8, 10)
-        var activeSandPromo = new Promotion
-        {
-            PromotionCode = "PROMO-SAND-40",
-            Name = "【値引きシール】こだわりたまごサンド 40%OFF",
-            PromotionType = "DIRECT_DISCOUNT",
-            Status = "APPROVED",
-            TargetProductId = pSand1.Id,
-            TargetBatchId = bSand1.Id,
-            DiscountPercent = 40.00m,
-            StartTime = now.AddHours(-2),
-            EndTime = now.AddHours(12),
-            CreatedVia = "AI_AGENT",
-            CreatedBy = "OrchestratorAgent",
-            ApprovedBy = "佐藤 店長",
-            ApprovedAt = now.AddHours(-1),
-            AiReasoning = "賞味期限6時間前のロットBATCH-SAND-001の廃棄防止のため40%値引きシールを適用",
-            CreatedAt = now.AddHours(-2)
-        };
-        context.Promotions.Add(activeSandPromo);
-
-        var activeBentoPromo = new Promotion
-        {
-            PromotionCode = "PROMO-BENTO-20",
-            Name = "【値引きシール】チキン南蛮弁当 20%OFF",
-            PromotionType = "DIRECT_DISCOUNT",
-            Status = "APPROVED",
-            TargetProductId = pBento1.Id,
-            TargetBatchId = bBento1.Id,
-            DiscountPercent = 20.00m,
-            StartTime = now.AddHours(-1),
-            EndTime = now.AddHours(8),
-            CreatedVia = "AI_AGENT",
-            CreatedBy = "OrchestratorAgent",
-            ApprovedBy = "佐藤 店長",
-            ApprovedAt = now.AddHours(-1),
-            AiReasoning = "夕方ピーク前の賞味期限間近ロットBATCH-BENTO-001を20%割引で売り切り促進",
-            CreatedAt = now.AddHours(-1)
-        };
-        context.Promotions.Add(activeBentoPromo);
-
         await context.SaveChangesAsync();
     }
 }
