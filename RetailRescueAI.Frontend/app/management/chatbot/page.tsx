@@ -18,6 +18,7 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   proposedPromotion?: any;
+  agentSteps?: any[];
 }
 
 export default function ManagerChatbotPage() {
@@ -59,14 +60,15 @@ export default function ManagerChatbotPage() {
         role: 'assistant',
         content: res.reply,
         proposedPromotion: res.proposedPromotion,
+        agentSteps: res.agentSteps,
       };
       setMessages((prev) => [...prev, assistantMsg]);
-    } catch (err) {
+    } catch (err: any) {
       setMessages((prev) => [
         ...prev,
         {
           role: 'assistant',
-          content: '申し訳ありません。AI応答の取得中にエラーが発生しました。',
+          content: `⚠️ 【AI処理エラー】\n${err.message || 'AI応答の取得中にエラーが発生しました。'}`,
         },
       ]);
     } finally {
@@ -151,6 +153,63 @@ export default function ManagerChatbotPage() {
                 >
                   {m.content}
                 </div>
+
+                {/* Collapsible Agent Collaboration Section (Microsoft Semantic Kernel) */}
+                {!isUser && m.agentSteps && m.agentSteps.length > 0 && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs space-y-2 shadow-xs">
+                    <div className="flex items-center justify-between font-bold text-slate-700">
+                      <div className="flex items-center gap-1.5 text-indigo-700">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        <span>連携エージェント（Microsoft Semantic Kernel）:</span>
+                      </div>
+                      <span className="text-[10px] bg-indigo-100/70 text-indigo-800 px-2 py-0.5 rounded-md font-mono">
+                        {m.agentSteps.length} エージェント協調
+                      </span>
+                    </div>
+
+                    {/* Agent badges row */}
+                    <div className="flex flex-wrap gap-1.5 pt-0.5">
+                      {m.agentSteps.map((step: any, sIdx: number) => (
+                        <span
+                          key={sIdx}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white border border-slate-200 text-[11px] font-medium text-slate-700 shadow-2xs"
+                          title={step.roleTitle}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                          <span className="font-bold text-slate-900">{step.agentKey}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">({step.durationMs}ms)</span>
+                        </span>
+                      ))}
+                    </div>
+
+                    {/* Expandable trace details */}
+                    <details className="text-[11px] text-slate-600 cursor-pointer pt-1">
+                      <summary className="hover:text-indigo-600 font-medium text-slate-500 select-none">
+                        各エージェントの分析詳細を表示 ▾
+                      </summary>
+                      <div className="mt-2 space-y-2 border-t border-slate-200 pt-2">
+                        {m.agentSteps.map((step: any, sIdx: number) => (
+                          <div key={sIdx} className="bg-white p-2 rounded-lg border border-slate-200 space-y-1">
+                            <div className="flex justify-between items-center font-bold text-slate-800 text-[11px]">
+                              <span>{step.agentName}</span>
+                              <span className="text-emerald-600 text-[10px] font-mono px-1.5 py-0.2 bg-emerald-50 rounded">
+                                {step.status}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-500">{step.description}</p>
+                            {step.details && step.details.length > 0 && (
+                              <ul className="mt-1 space-y-0.5 pl-3 list-disc text-[10px] text-slate-600">
+                                {step.details.slice(0, 4).map((d: string, dIdx: number) => (
+                                  <li key={dIdx}>{d}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  </div>
+                )}
 
                 {/* Interactive Promotion Proposal Card if generated */}
                 {m.proposedPromotion && (

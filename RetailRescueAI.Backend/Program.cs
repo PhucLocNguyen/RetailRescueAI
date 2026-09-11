@@ -100,8 +100,10 @@ builder.Services.AddScoped<IChatbotService, ChatbotService>();
 builder.Services.AddScoped<IResultService, ResultService>();
 
 // 8. AI Multi-Agent Layer (Microsoft Semantic Kernel)
-builder.Services.AddHttpClient<GeminiLLMService>();
-builder.Services.AddSingleton<MockLLMService>();
+builder.Services.AddHttpClient<GeminiLLMService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
 builder.Services.AddScoped<ILLMService, GeminiLLMService>();
 
 // Register Semantic Kernel IChatCompletionService bridged to ILLMService

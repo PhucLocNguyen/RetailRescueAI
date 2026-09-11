@@ -244,7 +244,10 @@ export async function triggerManualAiRun(): Promise<AiPipelineRunResponse> {
   const res = await fetch(`${API_BASE_URL}/ai/run`, {
     method: 'POST',
   });
-  if (!res.ok) throw new Error('AI分析の実行に失敗しました。');
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.message || 'AI分析の実行に失敗しました。');
+  }
   return res.json();
 }
 
@@ -382,7 +385,10 @@ export async function sendChatMessage(message: string, history: any[]): Promise<
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, history })
   });
-  if (!res.ok) throw new Error('チャット送信に失敗しました。');
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.message || 'チャット送信に失敗しました。');
+  }
   return res.json();
 }
 

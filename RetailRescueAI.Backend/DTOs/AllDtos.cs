@@ -255,7 +255,8 @@ public record ChatRequest(
 public record ChatResponse(
     string Reply,
     bool HasPromotionProposal,
-    PromotionProposalDto? ProposedPromotion
+    PromotionProposalDto? ProposedPromotion,
+    List<AiAgentTraceStepDto>? AgentSteps = null
 );
 
 public record PromotionProposalDto(

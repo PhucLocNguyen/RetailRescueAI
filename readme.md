@@ -89,7 +89,7 @@ RetailRescueAIは、この「考える」部分を自動化します。ロット
 | **.NET SDK** | `9.0.200` | C# 13 / ASP.NET Core Web API |
 | **Microsoft.SemanticKernel** | `1.80.1` | オーケストレーション・ネイティブプラグイン基盤 |
 | **Microsoft.SemanticKernel.Agents.Core** | `1.80.1` | マルチエージェント抽象化レイヤー |
-| **Google Gemini API** | `gemini-2.5-flash` | 日本語推論・コンボトーク生成（MockLLM自動フォールバック付き） |
+| **Google Gemini API** | `gemini-2.5-flash` | 日本語推論・コンボトーク生成（直接連携・エラー透過型） |
 | **Microsoft.AspNetCore.SignalR** | Native .NET 9 | 店長承認イベントのリアルタイムPOSブロードキャスト |
 | **Entity Framework Core** | `9.0.2` | SQLite / SQL Server 対応のロット追跡データアクセス |
 | **Next.js** | `15.5.25` | React 19, TypeScript, Tailwind CSS, Lucide Icons |
@@ -174,7 +174,7 @@ RetailRescueAI/
 }
 ```
 
-> **Note**: 有効な Gemini API キーが設定されていない場合でも、組み込みの日本語エンタープライズ対応 `MockLLMService` が自動起動し、完全なデモ動作を保証します。
+> **Note**: 本システムはモック（疑似LLM）を使用せず、Google Gemini APIとダイレクトに連携します。APIキーの未設定や通信障害が発生した場合は、透明性を重視してエラーが即座にフロントエンドへ通知されます。
 
 ---
 
@@ -269,7 +269,7 @@ Cashiers receive real-time notifications and live AI upsell guidance:
 | **.NET SDK** | `9.0.200` | C# 13 / ASP.NET Core Web API |
 | **Microsoft.SemanticKernel** | `1.80.1` | Native plugins and AI orchestration kernel |
 | **Microsoft.SemanticKernel.Agents.Core** | `1.80.1` | Semantic multi-agent abstractions |
-| **Google Gemini API** | `gemini-2.5-flash` | Japanese reasoning & script generation (with automatic MockLLM fallback) |
+| **Google Gemini API** | `gemini-2.5-flash` | Japanese reasoning & script generation (direct integration & fail-fast error reporting) |
 | **Microsoft.AspNetCore.SignalR** | Native .NET 9 | Real-time POS promotion broadcast |
 | **Entity Framework Core** | `9.0.2` | SQLite / SQL Server ORM with batch tracking |
 | **Next.js** | `15.5.25` | React 19, TypeScript, Tailwind CSS, Lucide Icons |
@@ -354,7 +354,7 @@ RetailRescueAI/
 }
 ```
 
-> **Note**: If a live Gemini API key is not supplied, the built-in Japanese enterprise `MockLLMService` automatically activates to ensure 100% functional demonstrations out-of-the-box.
+> **Note**: This system integrates directly with Google Gemini API without mock fallbacks. If the API key is missing or an API call fails, errors are immediately propagated to the frontend for transparent reporting.
 
 ## Author
 PhucLocNguyen

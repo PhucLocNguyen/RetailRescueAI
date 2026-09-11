@@ -58,9 +58,17 @@ public class AiRecommendationsController : ControllerBase
     [HttpPost("run")]
     public async Task<ActionResult<AiPipelineRunResponse>> TriggerManualAiAnalysis(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Manager triggered manual AI analysis pipeline.");
-        var response = await _recommendationService.RunManualPipelineAsync(cancellationToken);
-        return Ok(response);
+        try
+        {
+            _logger.LogInformation("Manager triggered manual AI analysis pipeline.");
+            var response = await _recommendationService.RunManualPipelineAsync(cancellationToken);
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to run manual AI analysis pipeline.");
+            return StatusCode(500, new { message = ex.Message });
+        }
     }
 }
 

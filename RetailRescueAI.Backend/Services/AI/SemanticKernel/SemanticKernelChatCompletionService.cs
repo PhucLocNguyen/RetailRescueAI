@@ -72,7 +72,7 @@ public class SemanticKernelChatCompletionService : IChatCompletionService
         ChatHistory chatHistory,
         PromptExecutionSettings? executionSettings = null,
         Kernel? kernel = null,
-        CancellationToken cancellationToken = default)
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var contents = await GetChatMessageContentsAsync(chatHistory, executionSettings, kernel, cancellationToken);
         foreach (var content in contents)

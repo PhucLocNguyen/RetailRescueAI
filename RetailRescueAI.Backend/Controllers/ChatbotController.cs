@@ -18,8 +18,15 @@ public class ChatbotController : ControllerBase
     [HttpPost("message")]
     public async Task<ActionResult<ChatResponse>> SendMessage([FromBody] ChatRequest request, CancellationToken cancellationToken)
     {
-        var response = await _chatbotService.ProcessChatAsync(request, cancellationToken);
-        return Ok(response);
+        try
+        {
+            var response = await _chatbotService.ProcessChatAsync(request, cancellationToken);
+            return Ok(response);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { message = ex.Message });
+        }
     }
 }
 
