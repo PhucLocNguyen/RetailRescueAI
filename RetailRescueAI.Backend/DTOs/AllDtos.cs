@@ -271,7 +271,9 @@ public record PromotionProposalDto(
     decimal? DiscountedPrice,
     DateTime StartTime,
     DateTime EndTime,
-    string Reasoning
+    string Reasoning,
+    int? PromotionId = null,
+    string? Status = "PENDING"
 );
 
 // Dashboard & Results

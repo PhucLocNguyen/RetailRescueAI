@@ -392,3 +392,12 @@ export async function sendChatMessage(message: string, history: any[]): Promise<
   return res.json();
 }
 
+export async function resetDemoData(): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${API_BASE_URL}/inventory/reset-demo`, {
+    method: 'POST'
+  });
+  if (!res.ok) throw new Error('デモデータのリセットに失敗しました。');
+  return res.json();
+}
+
+

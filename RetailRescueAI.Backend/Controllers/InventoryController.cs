@@ -28,5 +28,15 @@ public class InventoryController : ControllerBase
         var dtos = await _inventoryService.GetExpiryRiskAnalysisAsync(cancellationToken);
         return Ok(dtos);
     }
-}
 
+    [HttpPost("reset-demo")]
+    public async Task<ActionResult> ResetDemoData(CancellationToken cancellationToken)
+    {
+        await _inventoryService.ResetDemoDataAsync(cancellationToken);
+        return Ok(new
+        {
+            success = true,
+            message = "デモデータを正常にリセットしました。全ロットの賞味期限が現在時刻を基準に再同期されました。"
+        });
+    }
+}

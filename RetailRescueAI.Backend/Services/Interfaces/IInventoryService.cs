@@ -8,5 +8,5 @@ public interface IInventoryService
     Task<List<InventoryBatchDto>> GetBatchesAsync(CancellationToken cancellationToken = default);
     Task<List<ExpiryRiskDto>> GetExpiryRiskAnalysisAsync(CancellationToken cancellationToken = default);
     Task<InventoryBatch?> DeductBatchInventoryFefoAsync(int productId, int quantity, CancellationToken cancellationToken = default);
+    Task ResetDemoDataAsync(CancellationToken cancellationToken = default);
 }
-

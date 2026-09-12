@@ -62,7 +62,15 @@ public class PromotionAgent
 
         var proposals = new List<PromotionProposal>();
         var allProducts = await _productRepository.GetAllAsync(cancellationToken);
-        var greenTea = allProducts.FirstOrDefault(p => p.ProductCode == "DRINK-001" || p.Barcode == "4901234567042" || p.Name.Contains("緑茶"));
+        // Dynamically find a suitable companion beverage product from inventory
+        var partnerDrink = allProducts.FirstOrDefault(p =>
+            p.Category != null && (
+                p.Category.Name.Contains("飲料") ||
+                p.Category.Name.Contains("ドリンク") ||
+                p.Category.Name.Contains("Drink") ||
+                p.Category.Name.Contains("Beverage")
+            ));
+        partnerDrink ??= allProducts.FirstOrDefault();
 
         // Only propose for items with risk AT_RISK or CRITICAL and PotentialWasteUnits > 0
         var candidateBatches = analysisResults
@@ -137,25 +145,37 @@ public class PromotionAgent
                 EvidenceMap: evidence
             ));
 
-            // BUNDLE_COMBO Proposal: Evaluated via ComboStrategyPlugin
-            if (greenTea != null && (product.Name.Contains("サンド") || product.ProductCode.Contains("SAND")))
+            // BUNDLE_COMBO Proposal: Evaluated dynamically via ComboStrategyPlugin for food/meal items
+            bool isMealCategory = product.Category != null && (
+                product.Category.Name.Contains("弁当") ||
+                product.Category.Name.Contains("サンド") ||
+                product.Category.Name.Contains("パン") ||
+                product.Category.Name.Contains("サラダ") ||
+                product.Category.Name.Contains("惣菜") ||
+                product.Category.Name.Contains("Delica") ||
+                product.Category.Name.Contains("Bakery") ||
+                product.Category.Name.Contains("Bento")
+            );
+
+            if (partnerDrink != null && partnerDrink.Id != product.Id && isMealCategory)
             {
-                decimal comboPrice = 350m;
+                decimal normalComboTotal = product.Price + partnerDrink.Price;
+                // Dynamic ~20% bundle discount rounded to nearest 10 yen
+                decimal comboPrice = Math.Round((normalComboTotal * 0.8m) / 10m, 0) * 10m;
+                decimal comboSavings = Math.Max(0, normalComboTotal - comboPrice);
 
                 string comboJson = _comboPlugin.EvaluateMealCombo(
                     product.Name,
                     product.Price,
                     product.CostPrice,
-                    greenTea.Name,
-                    greenTea.Price,
-                    greenTea.CostPrice,
+                    partnerDrink.Name,
+                    partnerDrink.Price,
+                    partnerDrink.CostPrice,
                     comboPrice
                 );
 
-                decimal normalComboTotal = product.Price + greenTea.Price;
-                decimal comboSavings = 70m;
-                string staffScript = $"「お客様、ご一緒に『{greenTea.Name}』はいかがでしょうか？ただいまセットで通常¥{normalComboTotal:N0}のところ、¥{comboPrice:N0}（¥{comboSavings:N0}お得）でお買い求めいただけます！」";
-                decimal marginPct = 35.7m;
+                string staffScript = $"「お客様、ご一緒に『{partnerDrink.Name}』はいかがでしょうか？ただいまセットで通常¥{normalComboTotal:N0}のところ、¥{comboPrice:N0}（¥{comboSavings:N0}お得）でお買い求めいただけます！」";
+                decimal marginPct = 25.0m;
 
                 try
                 {
@@ -170,29 +190,29 @@ public class PromotionAgent
                     _logger.LogWarning(ex, "Failed parsing combo evaluation JSON.");
                 }
 
-                var comboActionTitle = $"【ランチコンボ】たまごサンド＋宇治緑茶 セットで ¥{comboPrice:N0}（¥{comboSavings:N0}お得）";
+                var comboActionTitle = $"【お得なセット割】{product.Name} ＋ {partnerDrink.Name} セットで ¥{comboPrice:N0}（¥{comboSavings:N0}引き）";
                 var comboEvidence = new Dictionary<string, string>
                 {
-                    { "combo_type", "ランチセット / ドリンクバンドル割" },
+                    { "combo_type", "フード＆ドリンク相乗セット割" },
                     { "main_product", $"{product.Name} (ロット: {batch.BatchCode})" },
-                    { "partner_product", $"{greenTea.Name} (通常: ¥{greenTea.Price:N0})" },
+                    { "partner_product", $"{partnerDrink.Name} (通常: ¥{partnerDrink.Price:N0})" },
                     { "normal_total", $"¥{normalComboTotal:N0}" },
                     { "combo_special_price", $"¥{comboPrice:N0}" },
-                    { "customer_savings", $"¥{comboSavings:N0} 引き (実質ドリンク50%OFF)" },
-                    { "gross_profit_margin", $"{marginPct:F1}% (最低利益率15%を十分クリア)" }
+                    { "customer_savings", $"¥{comboSavings:N0} 引き" },
+                    { "gross_profit_margin", $"{marginPct:F1}% (最低利益率15%をクリア)" }
                 };
 
                 var comboReason = $@"【AIコンボ戦略サマリー】
 対象商品：{product.Name}（ロット: {batch.BatchCode}・残{batch.RemainingQuantity}個）
-相乗パートナー：{greenTea.Name}（定番飲料・在庫豊富）
-・単品通常合計：¥{normalComboTotal:N0} ➔ ランチコンボ特別価格：¥{comboPrice:N0}（¥{comboSavings:N0}引き）
+相乗パートナー：{partnerDrink.Name}（定番飲料・安定在庫）
+・単品通常合計：¥{normalComboTotal:N0} ➔ コンボ特別価格：¥{comboPrice:N0}（¥{comboSavings:N0}引き）
 
 【AI推奨接客スクリプト（POSレジ画面に自動配信）】
 {staffScript}
 
 【利益性・安全検証】
-サンド原価¥{product.CostPrice:N0} ＋ お茶原価¥{greenTea.CostPrice:N0} ＝ 合計原価¥{product.CostPrice + greenTea.CostPrice:N0}。
-コンボ売価¥{comboPrice:N0} に対し粗利益¥{comboPrice - (product.CostPrice + greenTea.CostPrice):N0}（粗利率{marginPct:F1}%）をしっかり維持し、廃棄ロス全額回避と客単価向上を同時に実現します。";
+{product.Name}原価¥{product.CostPrice:N0} ＋ {partnerDrink.Name}原価¥{partnerDrink.CostPrice:N0} ＝ 合計原価¥{product.CostPrice + partnerDrink.CostPrice:N0}。
+コンボ売価¥{comboPrice:N0} に対し粗利益¥{comboPrice - (product.CostPrice + partnerDrink.CostPrice):N0}（粗利率{marginPct:F1}%）を維持し、廃棄ロス全額回避と客単価向上を両立します。";
 
                 proposals.Add(new PromotionProposal(
                     TargetBatch: batch,
@@ -208,7 +228,7 @@ public class PromotionAgent
                     ExpectedRevenue: expectedSales * comboPrice,
                     Reason: comboReason,
                     EvidenceMap: comboEvidence,
-                    ComboProduct: greenTea,
+                    ComboProduct: partnerDrink,
                     ComboSavings: comboSavings
                 ));
             }

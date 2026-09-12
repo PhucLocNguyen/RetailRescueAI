@@ -7,6 +7,7 @@ import {
   InventoryBatch,
   fetchDashboardStats,
   fetchBatches,
+  resetDemoData,
 } from '@/lib/api';
 import AiAgentWorkflowModal from '@/components/AiAgentWorkflowModal';
 import {
@@ -19,6 +20,7 @@ import {
   Boxes,
   ArrowRight,
   RefreshCw,
+  RotateCcw,
   Coins,
   Play,
 } from 'lucide-react';
@@ -27,6 +29,7 @@ export default function ManagementDashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [urgentBatches, setUrgentBatches] = useState<InventoryBatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isResetting, setIsResetting] = useState(false);
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
 
@@ -53,6 +56,20 @@ export default function ManagementDashboardPage() {
     }
   }
 
+  async function handleResetDemo() {
+    if (!confirm('デモ用データ（在庫ロット・売上・プロモーション）を現在時刻を基準にリセットしますか？\n賞味期限がリアルタイムに再設定されます。')) return;
+    setIsResetting(true);
+    try {
+      await resetDemoData();
+      await loadData();
+      alert('✅ デモデータを正常に初期化しました！\n全ロットの賞味期限が現在時刻を基準に同期されました。');
+    } catch (err: any) {
+      alert('⚠️ 初期化エラー: ' + err.message);
+    } finally {
+      setIsResetting(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -73,6 +90,16 @@ export default function ManagementDashboardPage() {
             title="再読み込み"
           >
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+          </button>
+
+          <button
+            onClick={handleResetDemo}
+            disabled={isResetting || isLoading}
+            className="px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-2 active:scale-95 disabled:opacity-60"
+            title="デモデータを現在時刻でリセット"
+          >
+            <RotateCcw className={`w-4 h-4 text-emerald-600 ${isResetting ? 'animate-spin' : ''}`} />
+            <span>{isResetting ? '初期化中...' : 'デモデータ初期化'}</span>
           </button>
 
           <button

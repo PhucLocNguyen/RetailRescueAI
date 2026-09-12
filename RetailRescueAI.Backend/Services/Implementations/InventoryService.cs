@@ -1,3 +1,4 @@
+using RetailRescueAI.Backend.Data;
 using RetailRescueAI.Backend.DTOs;
 using RetailRescueAI.Backend.Models;
 using RetailRescueAI.Backend.Repositories.Interfaces;
@@ -9,13 +10,16 @@ public class InventoryService : IInventoryService
 {
     private readonly IInventoryBatchRepository _batchRepository;
     private readonly ISaleRepository _saleRepository;
+    private readonly AppDbContext _dbContext;
 
     public InventoryService(
         IInventoryBatchRepository batchRepository,
-        ISaleRepository saleRepository)
+        ISaleRepository saleRepository,
+        AppDbContext dbContext)
     {
         _batchRepository = batchRepository;
         _saleRepository = saleRepository;
+        _dbContext = dbContext;
     }
 
     public async Task<List<InventoryBatchDto>> GetBatchesAsync(CancellationToken cancellationToken = default)
@@ -134,5 +138,9 @@ public class InventoryService : IInventoryService
         await _batchRepository.SaveChangesAsync(cancellationToken);
         return primaryBatch;
     }
-}
 
+    public async Task ResetDemoDataAsync(CancellationToken cancellationToken = default)
+    {
+        await DbInitializer.ResetDemoDataAsync(_dbContext);
+    }
+}

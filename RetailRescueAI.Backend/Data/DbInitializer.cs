@@ -19,14 +19,52 @@ public static class DbInitializer
     {
         await context.Database.EnsureCreatedAsync();
 
-        if (await context.Users.AnyAsync())
+        var now = DateTime.UtcNow;
+        bool needReset = false;
+
+        if (!await context.Users.AnyAsync())
         {
-            return; // DB already seeded
+            needReset = true;
         }
+        else
+        {
+            // If existing batches are all expired or fewer than 2 active non-expired batches, auto-refresh
+            var validBatchesCount = await context.InventoryBatches.CountAsync(b => b.ExpiryDate > now);
+            if (validBatchesCount <= 1)
+            {
+                needReset = true;
+            }
+        }
+
+        if (needReset)
+        {
+            await ResetDemoDataAsync(context);
+        }
+    }
+
+    public static async Task ResetDemoDataAsync(AppDbContext context)
+    {
+        // 1. Clean existing records in reverse dependency order
+        context.PromotionResults.RemoveRange(context.PromotionResults);
+        context.AIRecommendationEvidences.RemoveRange(context.AIRecommendationEvidences);
+        context.AIRecommendations.RemoveRange(context.AIRecommendations);
+        context.SaleItems.RemoveRange(context.SaleItems);
+        context.Sales.RemoveRange(context.Sales);
+        context.PromotionConditions.RemoveRange(context.PromotionConditions);
+        context.PromotionProducts.RemoveRange(context.PromotionProducts);
+        context.Promotions.RemoveRange(context.Promotions);
+        context.CustomerPurchaseHistories.RemoveRange(context.CustomerPurchaseHistories);
+        context.Customers.RemoveRange(context.Customers);
+        context.InventoryBatches.RemoveRange(context.InventoryBatches);
+        context.Products.RemoveRange(context.Products);
+        context.ProductCategories.RemoveRange(context.ProductCategories);
+        context.Users.RemoveRange(context.Users);
+        context.Stores.RemoveRange(context.Stores);
+        await context.SaveChangesAsync();
 
         var now = DateTime.UtcNow;
 
-        // 1. Stores
+        // 2. Stores
         var store = new Store
         {
             StoreCode = "STORE-001",
@@ -38,7 +76,7 @@ public static class DbInitializer
         context.Stores.Add(store);
         await context.SaveChangesAsync();
 
-        // 2. Users
+        // 3. Users
         var users = new List<User>
         {
             new()
@@ -62,7 +100,7 @@ public static class DbInitializer
         };
         context.Users.AddRange(users);
 
-        // 3. Categories
+        // 4. Categories
         var catBento = new ProductCategory { Name = "お弁当 (Bento)", Description = "日替わり弁当・丼もの" };
         var catSalad = new ProductCategory { Name = "サラダ・総菜 (Salad & Delica)", Description = "フレッシュサラダ・惣菜" };
         var catSand = new ProductCategory { Name = "サンドイッチ・パン (Bakery)", Description = "サンドイッチ・調理パン" };
@@ -70,7 +108,7 @@ public static class DbInitializer
         context.ProductCategories.AddRange(catBento, catSalad, catSand, catDrink);
         await context.SaveChangesAsync();
 
-        // 4. Products
+        // 5. Products
         var pBento1 = new Product
         {
             ProductCode = "BENTO-001",
@@ -149,120 +187,123 @@ public static class DbInitializer
         context.Products.AddRange(pBento1, pSalad1, pSand1, pDrink1, pBento2);
         await context.SaveChangesAsync();
 
-        // 5. Inventory Batches
-        // Chicken Bento: Batch 1 (Critical: 30 units, expires in 18 hours), Batch 2 (Available: 40 units, expires in 42 hours)
+        // 6. Inventory Batches with fresh, realistic shelf-lives relative to NOW
+        // A. Critical Bento: 28 remaining, expires in 5.5 hours (Prime for evening peak 30% discount!)
         var bBento1 = new InventoryBatch
         {
             BatchCode = "BATCH-BENTO-001",
             ProductId = pBento1.Id,
             StoreId = store.Id,
             InitialQuantity = 40,
-            RemainingQuantity = 30, // 30 remaining! (Matches core scenario)
-            ProductionDate = now.AddHours(-12),
-            ExpiryDate = now.AddHours(18), // 18 hours until expiry
+            RemainingQuantity = 28,
+            ProductionDate = now.AddHours(-18),
+            ExpiryDate = now.AddHours(5.5),
             Status = "CRITICAL",
-            CreatedAt = now.AddHours(-12)
+            CreatedAt = now.AddHours(-18)
         };
 
-        var bBento2 = new InventoryBatch
+        // B. Critical Egg Sandwich: 16 remaining, expires in 4.0 hours (Perfect for Chatbot 30% / 3割 discount demo!)
+        var bSand1 = new InventoryBatch
         {
-            BatchCode = "BATCH-BENTO-002",
-            ProductId = pBento1.Id,
+            BatchCode = "BATCH-SAND-001",
+            ProductId = pSand1.Id,
             StoreId = store.Id,
-            InitialQuantity = 50,
-            RemainingQuantity = 40,
-            ProductionDate = now.AddHours(-2),
-            ExpiryDate = now.AddHours(42),
-            Status = "AVAILABLE",
-            CreatedAt = now.AddHours(-2)
+            InitialQuantity = 25,
+            RemainingQuantity = 16,
+            ProductionDate = now.AddHours(-18),
+            ExpiryDate = now.AddHours(4.0),
+            Status = "CRITICAL",
+            CreatedAt = now.AddHours(-18)
         };
 
-        // Salmon Salad: Batch 1 (At-Risk: 25 units, expires in 26 hours)
+        // C. At-Risk Salad: 22 remaining, expires in 16 hours
         var bSalad1 = new InventoryBatch
         {
             BatchCode = "BATCH-SALAD-001",
             ProductId = pSalad1.Id,
             StoreId = store.Id,
             InitialQuantity = 30,
-            RemainingQuantity = 25,
-            ProductionDate = now.AddHours(-10),
-            ExpiryDate = now.AddHours(26),
+            RemainingQuantity = 22,
+            ProductionDate = now.AddHours(-8),
+            ExpiryDate = now.AddHours(16.0),
             Status = "AT_RISK",
-            CreatedAt = now.AddHours(-10)
+            CreatedAt = now.AddHours(-8)
         };
 
-        // Egg Sandwich: Batch 1 (Critical: 12 units, expires in 6 hours), Batch 2 (Fresh: 20 units, expires in 28 hours), Batch Expired (Expired 2 hours ago)
-        var bSand1 = new InventoryBatch
-        {
-            BatchCode = "BATCH-SAND-001",
-            ProductId = pSand1.Id,
-            StoreId = store.Id,
-            InitialQuantity = 20,
-            RemainingQuantity = 12,
-            ProductionDate = now.AddHours(-18),
-            ExpiryDate = now.AddHours(6),
-            Status = "CRITICAL",
-            CreatedAt = now.AddHours(-18)
-        };
-
-        var bSand2 = new InventoryBatch
-        {
-            BatchCode = "BATCH-SAND-002",
-            ProductId = pSand1.Id,
-            StoreId = store.Id,
-            InitialQuantity = 30,
-            RemainingQuantity = 20,
-            ProductionDate = now.AddHours(-2),
-            ExpiryDate = now.AddHours(28),
-            Status = "AVAILABLE",
-            CreatedAt = now.AddHours(-2)
-        };
-
-        var bSandExpired = new InventoryBatch
-        {
-            BatchCode = "BATCH-SAND-EXPIRED",
-            ProductId = pSand1.Id,
-            StoreId = store.Id,
-            InitialQuantity = 10,
-            RemainingQuantity = 5,
-            ProductionDate = now.AddHours(-30),
-            ExpiryDate = now.AddHours(-2), // 2 hours expired!
-            Status = "EXPIRED",
-            CreatedAt = now.AddHours(-30)
-        };
-
-        // Green Tea: Batch 1 (Available: 60 units, expires in 30 days)
-        var bDrink1 = new InventoryBatch
-        {
-            BatchCode = "BATCH-DRINK-001",
-            ProductId = pDrink1.Id,
-            StoreId = store.Id,
-            InitialQuantity = 80,
-            RemainingQuantity = 60,
-            ProductionDate = now.AddDays(-10),
-            ExpiryDate = now.AddDays(30),
-            Status = "AVAILABLE",
-            CreatedAt = now.AddDays(-10)
-        };
-
-        // Katsudon: Batch 1 (At-Risk: 18 units, expires in 14 hours)
+        // D. At-Risk Katsudon: 15 remaining, expires in 14 hours
         var bBento3 = new InventoryBatch
         {
             BatchCode = "BATCH-BENTO-003",
             ProductId = pBento2.Id,
             StoreId = store.Id,
             InitialQuantity = 25,
-            RemainingQuantity = 18,
+            RemainingQuantity = 15,
             ProductionDate = now.AddHours(-10),
-            ExpiryDate = now.AddHours(14),
+            ExpiryDate = now.AddHours(14.0),
             Status = "AT_RISK",
             CreatedAt = now.AddHours(-10)
         };
 
-        context.InventoryBatches.AddRange(bBento1, bBento2, bSalad1, bSand1, bSand2, bSandExpired, bDrink1, bBento3);
+        // E. Fresh Bento: 45 remaining, expires in 44 hours
+        var bBento2 = new InventoryBatch
+        {
+            BatchCode = "BATCH-BENTO-002",
+            ProductId = pBento1.Id,
+            StoreId = store.Id,
+            InitialQuantity = 50,
+            RemainingQuantity = 45,
+            ProductionDate = now.AddHours(-4),
+            ExpiryDate = now.AddHours(44.0),
+            Status = "AVAILABLE",
+            CreatedAt = now.AddHours(-4)
+        };
+
+        // F. Fresh Egg Sandwich: 25 remaining, expires in 32 hours
+        var bSand2 = new InventoryBatch
+        {
+            BatchCode = "BATCH-SAND-002",
+            ProductId = pSand1.Id,
+            StoreId = store.Id,
+            InitialQuantity = 30,
+            RemainingQuantity = 25,
+            ProductionDate = now.AddHours(-4),
+            ExpiryDate = now.AddHours(32.0),
+            Status = "AVAILABLE",
+            CreatedAt = now.AddHours(-4)
+        };
+
+        // G. Stable Beverage (Uji Green Tea): 75 remaining, expires in 45 days (Companion drink for meal combos!)
+        var bDrink1 = new InventoryBatch
+        {
+            BatchCode = "BATCH-DRINK-001",
+            ProductId = pDrink1.Id,
+            StoreId = store.Id,
+            InitialQuantity = 80,
+            RemainingQuantity = 75,
+            ProductionDate = now.AddDays(-10),
+            ExpiryDate = now.AddDays(45),
+            Status = "AVAILABLE",
+            CreatedAt = now.AddDays(-10)
+        };
+
+        // H. Expired Batch (Egg Sandwich): 4 units remaining, expired 1.5 hours ago (Demonstrates food safety rule BR-007)
+        var bSandExpired = new InventoryBatch
+        {
+            BatchCode = "BATCH-SAND-EXPIRED",
+            ProductId = pSand1.Id,
+            StoreId = store.Id,
+            InitialQuantity = 10,
+            RemainingQuantity = 4,
+            ProductionDate = now.AddHours(-26),
+            ExpiryDate = now.AddHours(-1.5),
+            Status = "EXPIRED",
+            CreatedAt = now.AddHours(-26)
+        };
+
+        context.InventoryBatches.AddRange(bBento1, bSand1, bSalad1, bBento3, bBento2, bSand2, bDrink1, bSandExpired);
         await context.SaveChangesAsync();
 
-        // 6. Customers
+        // 7. Customers
         var c1 = new Customer
         {
             CustomerCode = "C000123",
@@ -284,16 +325,15 @@ public static class DbInitializer
         context.Customers.AddRange(c1, c2);
         await context.SaveChangesAsync();
 
-        // 7. Seed 7 days of historical sales transactions
+        // 8. 7 days of historical sales transactions leading up to NOW
         var random = new Random(42);
         for (int i = 7; i >= 1; i--)
         {
             var date = now.AddDays(-i);
-            // 8 to 15 sales per day
-            int dailyTxCount = random.Next(10, 16);
+            int dailyTxCount = random.Next(11, 16);
             for (int j = 0; j < dailyTxCount; j++)
             {
-                var hour = random.Next(11, 21); // between 11:00 and 21:00 (peak around 17:00-19:00)
+                var hour = random.Next(11, 21);
                 var saleTime = new DateTime(date.Year, date.Month, date.Day, hour, random.Next(0, 59), random.Next(0, 59));
                 
                 var sale = new Sale
@@ -320,7 +360,7 @@ public static class DbInitializer
                 };
                 sale.Items.Add(bentoItem);
 
-                // Sometimes add salad or drink
+                // Sometimes add sandwich or salad or drink
                 if (random.Next(0, 2) == 1)
                 {
                     var drinkItem = new SaleItem
@@ -335,11 +375,24 @@ public static class DbInitializer
                     sale.Items.Add(drinkItem);
                 }
 
+                if (random.Next(0, 3) == 1)
+                {
+                    var sandItem = new SaleItem
+                    {
+                        Sale = sale,
+                        ProductId = pSand1.Id,
+                        Quantity = 1,
+                        UnitPrice = pSand1.Price,
+                        DiscountAmount = 0m,
+                        FinalPrice = pSand1.Price
+                    };
+                    sale.Items.Add(sandItem);
+                }
+
                 sale.Subtotal = sale.Items.Sum(x => x.FinalPrice);
                 sale.TotalAmount = sale.Subtotal;
                 context.Sales.Add(sale);
 
-                // Add Customer purchase history
                 if (sale.CustomerId.HasValue)
                 {
                     foreach (var item in sale.Items)
@@ -358,7 +411,7 @@ public static class DbInitializer
         }
         await context.SaveChangesAsync();
 
-        // 8. Seed a previous completed Promotion Result for baseline analytics
+        // 9. Seed a previous completed Promotion Result for baseline analytics & charts
         var prevPromo = new Promotion
         {
             PromotionCode = "PROMO-PREV-001",
@@ -394,7 +447,7 @@ public static class DbInitializer
             ActualSales = 26,
             ExpectedWasteAvoided = 15,
             ActualWasteAvoided = 17,
-            WasteReductionRate = 81.00m, // 81% waste reduction!
+            WasteReductionRate = 81.00m,
             ExpectedRevenue = 10560m,
             ActualRevenue = 11440m,
             EvaluatedAt = now.AddDays(-2)
