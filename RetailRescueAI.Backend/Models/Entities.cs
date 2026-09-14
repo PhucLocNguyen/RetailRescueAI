@@ -18,7 +18,7 @@ public class User
     public string Role { get; set; } = "STAFF"; // STAFF or MANAGER
     public int? StoreId { get; set; }
     public Store? Store { get; set; }
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow.AddHours(7);
+    
     public DateTime CreatedAt { get; set; } = AppClock.Now;
 }
 
@@ -34,7 +34,7 @@ public class Store
     public string Address { get; set; } = string.Empty;
     [MaxLength(50)]
     public string Phone { get; set; } = string.Empty;
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow.AddHours(7);
+    
     public DateTime CreatedAt { get; set; } = AppClock.Now;
 }
 
@@ -79,7 +79,7 @@ public class Product
     [MaxLength(255)]
     public string ImageUrl { get; set; } = string.Empty;
 
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow.AddHours(7);
+    
     public DateTime CreatedAt { get; set; } = AppClock.Now;
 
     public ICollection<InventoryBatch> Batches { get; set; } = new List<InventoryBatch>();
@@ -106,8 +106,7 @@ public class InventoryBatch
     [Required, MaxLength(30)]
     public string Status { get; set; } = "AVAILABLE"; // AVAILABLE, AT_RISK, CRITICAL, EXPIRED, SOLD_OUT
 
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow.AddHours(7);
-    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow.AddHours(7);
+    
     public DateTime CreatedAt { get; set; } = AppClock.Now;
     public DateTime UpdatedAt { get; set; } = AppClock.Now;
 }
@@ -125,7 +124,7 @@ public class Customer
     [MaxLength(100)]
     public string Email { get; set; } = string.Empty;
     public int Points { get; set; } = 0;
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow.AddHours(7);
+    
     public DateTime CreatedAt { get; set; } = AppClock.Now;
 }
 
@@ -143,7 +142,6 @@ public class CustomerPurchaseHistory
     [Column(TypeName = "decimal(18,2)")]
     public decimal UnitPrice { get; set; }
 
-    public DateTime PurchaseDate { get; set; } = DateTime.UtcNow.AddHours(7);
     public DateTime PurchaseDate { get; set; } = AppClock.Now;
 }
 
@@ -200,8 +198,7 @@ public class Promotion
     [MaxLength(1000)]
     public string? AiReasoning { get; set; }
 
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow.AddHours(7);
-    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow.AddHours(7);
+    
     public DateTime CreatedAt { get; set; } = AppClock.Now;
     public DateTime UpdatedAt { get; set; } = AppClock.Now;
 
@@ -273,7 +270,7 @@ public class Sale
     [Required, MaxLength(30)]
     public string Status { get; set; } = "COMPLETED";
 
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow.AddHours(7);
+    
     public DateTime CreatedAt { get; set; } = AppClock.Now;
 
     public ICollection<SaleItem> Items { get; set; } = new List<SaleItem>();
@@ -361,7 +358,7 @@ public class AIRecommendation
 
     public int? CreatedPromotionId { get; set; }
 
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow.AddHours(7);
+    
     public DateTime CreatedAt { get; set; } = AppClock.Now;
     public DateTime? ReviewedAt { get; set; }
     [MaxLength(100)]
@@ -421,7 +418,6 @@ public class PromotionResult
     [Column(TypeName = "decimal(18,2)")]
     public decimal ActualRevenue { get; set; }
 
-    public DateTime EvaluatedAt { get; set; } = DateTime.UtcNow.AddHours(7);
     public DateTime EvaluatedAt { get; set; } = AppClock.Now;
 }
 
