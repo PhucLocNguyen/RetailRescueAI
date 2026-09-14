@@ -51,7 +51,8 @@ public class SemanticKernelChatCompletionService : IChatCompletionService
             else
             {
                 string roleName = msg.Role == AuthorRole.Assistant ? "assistant" : "user";
-                historyDtos.Add(new ChatMessageDto(roleName, msg.Content ?? string.Empty, DateTime.UtcNow));
+                historyDtos.Add(new ChatMessageDto(roleName, msg.Content ?? string.Empty, DateTime.UtcNow.AddHours(7)));
+                historyDtos.Add(new ChatMessageDto(roleName, msg.Content ?? string.Empty, RetailRescueAI.Backend.Common.AppClock.Now));
             }
         }
 

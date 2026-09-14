@@ -18,7 +18,7 @@ public class ProductService : IProductService
 
     public async Task<List<PosProductDto>> GetProductsAsync(string? searchQuery, CancellationToken cancellationToken = default)
     {
-        var now = DateTime.UtcNow;
+        var now = RetailRescueAI.Backend.Common.AppClock.Now;
         var products = await _productRepository.SearchProductsAsync(searchQuery, cancellationToken);
         var activePromos = await _promotionRepository.GetActivePromotionsAsync(now, cancellationToken);
 

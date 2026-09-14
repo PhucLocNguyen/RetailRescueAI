@@ -56,7 +56,7 @@ public class ChatbotService : IChatbotService
 
     public async Task<ChatResponse> ProcessChatAsync(ChatRequest request, CancellationToken cancellationToken = default)
     {
-        var now = DateTime.UtcNow;
+        var now = RetailRescueAI.Backend.Common.AppClock.Now;
         var traceSteps = new List<AiAgentTraceStepDto>();
 
         // 1. Fetch active inventory batches & existing pending promotions

@@ -42,7 +42,8 @@ public class InventoryDataPlugin
         if (batch == null) return false;
 
         batch.Status = newStatus.ToUpperInvariant();
-        batch.UpdatedAt = DateTime.UtcNow;
+        batch.UpdatedAt = DateTime.UtcNow.AddHours(7);
+        batch.UpdatedAt = RetailRescueAI.Backend.Common.AppClock.Now;
         _batchRepository.Update(batch);
         await _batchRepository.SaveChangesAsync(cancellationToken);
         _logger.LogInformation("[InventoryDataPlugin] Updated batch {BatchCode} status to {Status}", batch.BatchCode, newStatus);

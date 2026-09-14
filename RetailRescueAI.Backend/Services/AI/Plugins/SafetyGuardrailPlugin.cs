@@ -25,8 +25,10 @@ public class SafetyGuardrailPlugin
         var messages = new List<string>();
         bool isValid = true;
 
-        if (!DateTime.TryParse(endTimeIso, out var endTime)) endTime = DateTime.UtcNow.AddHours(5);
-        if (!DateTime.TryParse(expiryDateIso, out var expiryDate)) expiryDate = DateTime.UtcNow.AddHours(6);
+        if (!DateTime.TryParse(endTimeIso, out var endTime)) endTime = DateTime.UtcNow.AddHours(7).AddHours(5);
+        if (!DateTime.TryParse(expiryDateIso, out var expiryDate)) expiryDate = DateTime.UtcNow.AddHours(7).AddHours(6);
+        if (!DateTime.TryParse(endTimeIso, out var endTime)) endTime = RetailRescueAI.Backend.Common.AppClock.Now.AddHours(5);
+        if (!DateTime.TryParse(expiryDateIso, out var expiryDate)) expiryDate = RetailRescueAI.Backend.Common.AppClock.Now.AddHours(6);
 
         // 1. BR-003: Promotion End Time must NOT exceed Batch Expiry Time
         if (endTime > expiryDate)

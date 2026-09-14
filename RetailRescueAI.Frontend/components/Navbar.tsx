@@ -1,13 +1,32 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ShoppingBag, LayoutDashboard, Sparkles, Store, ShieldCheck, UserCheck } from 'lucide-react';
+import { ShoppingBag, LayoutDashboard, Sparkles, Store, Clock } from 'lucide-react';
 
 export default function Navbar() {
   const pathname = usePathname();
   const isPos = pathname.startsWith('/pos');
   const isManagement = pathname.startsWith('/management');
+  const [jstTime, setJstTime] = useState<string>('');
+
+  useEffect(() => {
+    const update = () => {
+      setJstTime(
+        new Date().toLocaleTimeString('ja-JP', {
+          timeZone: 'Asia/Tokyo',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        })
+      );
+    };
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <header className="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-50 shadow-md">
@@ -30,6 +49,11 @@ export default function Navbar() {
           <div className="hidden md:flex items-center gap-2 pl-4 border-l border-slate-800 text-xs text-slate-300">
             <Store className="w-3.5 h-3.5 text-emerald-400" />
             <span>ライフマート 新宿東口店 #01</span>
+            <span className="text-slate-600">|</span>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-800/90 border border-slate-700 font-mono text-[11px] text-amber-300 font-bold shadow-sm">
+              <Clock className="w-3 h-3 text-amber-400" />
+              <span>JST {jstTime || '--:--:--'}</span>
+            </span>
           </div>
         </div>
 

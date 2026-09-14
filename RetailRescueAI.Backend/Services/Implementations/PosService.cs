@@ -40,7 +40,7 @@ public class PosService : IPosService
         PosRecommendationRequest request,
         CancellationToken cancellationToken = default)
     {
-        var now = DateTime.UtcNow;
+        var now = RetailRescueAI.Backend.Common.AppClock.Now;
 
         // BR-005: ONLY APPROVED promotions active in time window
         var activePromotions = await _promotionRepository.GetActivePromotionsAsync(now, cancellationToken);
@@ -189,7 +189,7 @@ public class PosService : IPosService
         CheckoutRequest request,
         CancellationToken cancellationToken = default)
     {
-        var now = DateTime.UtcNow;
+        var now = RetailRescueAI.Backend.Common.AppClock.Now;
         var txNumber = $"TX-{now:yyyyMMddHHmmss}-{new Random().Next(100, 999)}";
 
         var staff = await _userRepository.GetStaffUserAsync(cancellationToken);
@@ -516,7 +516,7 @@ public class PosService : IPosService
         }
 
         var cleanCode = barcode.Trim();
-        var now = DateTime.UtcNow;
+        var now = RetailRescueAI.Backend.Common.AppClock.Now;
 
         // 1. Direct BatchCode Match (e.g. BATCH-SAND-001, BATCH-SAND-002)
         var batchByCode = await _batchRepository.GetByBatchCodeAsync(cleanCode, cancellationToken);

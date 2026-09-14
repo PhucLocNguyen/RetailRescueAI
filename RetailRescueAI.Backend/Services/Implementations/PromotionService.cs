@@ -51,7 +51,7 @@ public class PromotionService : IPromotionService
 
     public async Task<PromotionDto> CreatePromotionAsync(CreatePromotionRequest request, CancellationToken cancellationToken = default)
     {
-        var now = DateTime.UtcNow;
+        var now = RetailRescueAI.Backend.Common.AppClock.Now;
         var promoCode = $"PROMO-{now:yyyyMMddHHmmss}";
 
         var promo = new Promotion
@@ -111,8 +111,8 @@ public class PromotionService : IPromotionService
 
         promo.Status = "APPROVED";
         promo.ApprovedBy = "佐藤 店長 (Manager)";
-        promo.ApprovedAt = DateTime.UtcNow;
-        promo.UpdatedAt = DateTime.UtcNow;
+        promo.ApprovedAt = RetailRescueAI.Backend.Common.AppClock.Now;
+        promo.UpdatedAt = RetailRescueAI.Backend.Common.AppClock.Now;
 
         _promotionRepository.Update(promo);
         await _promotionRepository.SaveChangesAsync(cancellationToken);
@@ -149,7 +149,7 @@ public class PromotionService : IPromotionService
 
         promo.Status = "REJECTED";
         promo.RejectionReason = reason;
-        promo.UpdatedAt = DateTime.UtcNow;
+        promo.UpdatedAt = RetailRescueAI.Backend.Common.AppClock.Now;
 
         _promotionRepository.Update(promo);
         await _promotionRepository.SaveChangesAsync(cancellationToken);

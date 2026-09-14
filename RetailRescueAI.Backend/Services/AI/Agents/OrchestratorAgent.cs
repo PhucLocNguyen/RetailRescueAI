@@ -44,7 +44,7 @@ public class OrchestratorAgent
         _logger.LogInformation("[OrchestratorAgent] Starting AI Retail Rescue Analysis Pipeline...");
         _logger.LogInformation("=================================================");
 
-        var now = DateTime.UtcNow;
+        var now = RetailRescueAI.Backend.Common.AppClock.Now;
         var steps = new List<AiAgentTraceStepDto>();
 
         // 1. Fetch active inventory batches via Repository
@@ -189,7 +189,7 @@ public class OrchestratorAgent
             }
 
             var typeSuffix = p.PromotionType == "BUNDLE_COMBO" ? "COMBO" : "DISC";
-            var recCode = $"REC-{DateTime.UtcNow:yyyyMMddHHmmss}-{p.TargetBatch.Id}-{typeSuffix}";
+            var recCode = $"REC-{RetailRescueAI.Backend.Common.AppClock.Now:yyyyMMddHHmmss}-{p.TargetBatch.Id}-{typeSuffix}";
             var rec = new AIRecommendation
             {
                 RecommendationCode = recCode,

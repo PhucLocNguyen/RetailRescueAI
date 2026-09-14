@@ -24,7 +24,7 @@ public class InventoryService : IInventoryService
 
     public async Task<List<InventoryBatchDto>> GetBatchesAsync(CancellationToken cancellationToken = default)
     {
-        var now = DateTime.UtcNow;
+        var now = RetailRescueAI.Backend.Common.AppClock.Now;
         var batches = await _batchRepository.GetAllBatchesWithProductAsync(cancellationToken);
 
         return batches.Select(b =>
@@ -62,7 +62,7 @@ public class InventoryService : IInventoryService
 
     public async Task<List<ExpiryRiskDto>> GetExpiryRiskAnalysisAsync(CancellationToken cancellationToken = default)
     {
-        var now = DateTime.UtcNow;
+        var now = RetailRescueAI.Backend.Common.AppClock.Now;
         var activeBatches = await _batchRepository.GetActiveBatchesAsync(cancellationToken);
         var recentSaleItems = await _saleRepository.GetRecentSaleItemsAsync(now.AddDays(-7), cancellationToken);
 
@@ -112,7 +112,7 @@ public class InventoryService : IInventoryService
 
     public async Task<InventoryBatch?> DeductBatchInventoryFefoAsync(int productId, int quantity, CancellationToken cancellationToken = default)
     {
-        var now = DateTime.UtcNow;
+        var now = RetailRescueAI.Backend.Common.AppClock.Now;
         var batches = await _batchRepository.GetAvailableBatchesForProductFefoAsync(productId, cancellationToken);
 
         int remainingToDeduct = quantity;

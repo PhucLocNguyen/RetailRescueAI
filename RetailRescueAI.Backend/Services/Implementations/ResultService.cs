@@ -25,7 +25,7 @@ public class ResultService : IResultService
 
     public async Task<DashboardStatsDto> GetDashboardStatsAsync(CancellationToken cancellationToken = default)
     {
-        var now = DateTime.UtcNow;
+        var now = RetailRescueAI.Backend.Common.AppClock.Now;
         var activeBatches = await _batchRepository.GetActiveBatchesAsync(cancellationToken);
 
         int atRiskCount = activeBatches.Count(b => b.Status == "AT_RISK" || (b.ExpiryDate - now).TotalHours <= 24);

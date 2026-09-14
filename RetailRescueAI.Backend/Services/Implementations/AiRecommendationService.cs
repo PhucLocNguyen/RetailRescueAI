@@ -66,7 +66,7 @@ public class AiRecommendationService : IAiRecommendationService
         var rec = await _recommendationRepository.GetWithDetailsAsync(id, cancellationToken);
         if (rec == null) return (false, "AI提案が見つかりません。", null);
 
-        var now = DateTime.UtcNow;
+        var now = RetailRescueAI.Backend.Common.AppClock.Now;
         rec.Status = "APPROVED";
         rec.ReviewedAt = now;
         rec.ReviewedBy = "佐藤 店長 (Manager)";
@@ -169,7 +169,7 @@ public class AiRecommendationService : IAiRecommendationService
         if (rec == null) return false;
 
         rec.Status = "REJECTED";
-        rec.ReviewedAt = DateTime.UtcNow;
+        rec.ReviewedAt = RetailRescueAI.Backend.Common.AppClock.Now;
         rec.ReviewedBy = "佐藤 店長 (Manager)";
 
         _recommendationRepository.Update(rec);

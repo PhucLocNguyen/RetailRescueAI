@@ -19,7 +19,7 @@ public static class DbInitializer
     {
         await context.Database.EnsureCreatedAsync();
 
-        var now = DateTime.UtcNow;
+        var now = RetailRescueAI.Backend.Common.AppClock.Now;
         bool needReset = false;
 
         if (!await context.Users.AnyAsync())
@@ -28,9 +28,10 @@ public static class DbInitializer
         }
         else
         {
-            // If existing batches are all expired or fewer than 2 active non-expired batches, auto-refresh
-            var validBatchesCount = await context.InventoryBatches.CountAsync(b => b.ExpiryDate > now);
-            if (validBatchesCount <= 1)
+            // Ensure we always have active demo batches ready: at least 2 critical batches (expiring in 2-8h)
+            var eightHoursLater = now.AddHours(8);
+            var criticalBatchesCount = await context.InventoryBatches.CountAsync(b => b.ExpiryDate > now && b.ExpiryDate <= eightHoursLater && b.RemainingQuantity > 0);
+            if (criticalBatchesCount < 2)
             {
                 needReset = true;
             }
@@ -62,7 +63,7 @@ public static class DbInitializer
         context.Stores.RemoveRange(context.Stores);
         await context.SaveChangesAsync();
 
-        var now = DateTime.UtcNow;
+        var now = RetailRescueAI.Backend.Common.AppClock.Now;
 
         // 2. Stores
         var store = new Store
@@ -187,8 +188,8 @@ public static class DbInitializer
         context.Products.AddRange(pBento1, pSalad1, pSand1, pDrink1, pBento2);
         await context.SaveChangesAsync();
 
-        // 6. Inventory Batches with fresh, realistic shelf-lives relative to NOW
-        // A. Critical Bento: 28 remaining, expires in 5.5 hours (Prime for evening peak 30% discount!)
+        // 6. Inventory Batches with fresh, realistic shelf-lives relative to NOW (Japan Standard Time JST)
+        // A. Critical Bento: 28 remaining, expires in 2.5 hours (Prime for evening peak 30% discount!)
         var bBento1 = new InventoryBatch
         {
             BatchCode = "BATCH-BENTO-001",
@@ -197,12 +198,12 @@ public static class DbInitializer
             InitialQuantity = 40,
             RemainingQuantity = 28,
             ProductionDate = now.AddHours(-18),
-            ExpiryDate = now.AddHours(5.5),
+            ExpiryDate = now.AddHours(2.5),
             Status = "CRITICAL",
             CreatedAt = now.AddHours(-18)
         };
 
-        // B. Critical Egg Sandwich: 16 remaining, expires in 4.0 hours (Perfect for Chatbot 30% / 3割 discount demo!)
+        // B. Critical Egg Sandwich: 16 remaining, expires in 1.5 hours (Perfect for Chatbot 30% / 3割 discount demo!)
         var bSand1 = new InventoryBatch
         {
             BatchCode = "BATCH-SAND-001",
@@ -211,7 +212,7 @@ public static class DbInitializer
             InitialQuantity = 25,
             RemainingQuantity = 16,
             ProductionDate = now.AddHours(-18),
-            ExpiryDate = now.AddHours(4.0),
+            ExpiryDate = now.AddHours(1.5),
             Status = "CRITICAL",
             CreatedAt = now.AddHours(-18)
         };

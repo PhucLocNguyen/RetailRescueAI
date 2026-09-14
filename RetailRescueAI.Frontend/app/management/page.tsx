@@ -79,7 +79,7 @@ export default function ManagementDashboardPage() {
             店舗マネジメント・ダッシュボード
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            ライフマート 新宿東口店 | 最終更新: {lastUpdated.toLocaleTimeString('ja-JP')}
+            ライフマート 新宿東口店 | 日本標準時 (JST) | 最終更新: {lastUpdated.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo' })}
           </p>
         </div>
 
