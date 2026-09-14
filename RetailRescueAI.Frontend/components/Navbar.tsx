@@ -1,9 +1,7 @@
 'use client';
-
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ShoppingBag, LayoutDashboard, Sparkles, Store, ShieldCheck, UserCheck } from 'lucide-react';
 import { ShoppingBag, LayoutDashboard, Sparkles, Store, Clock } from 'lucide-react';
 
 export default function Navbar() {

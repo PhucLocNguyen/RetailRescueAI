@@ -21,7 +21,6 @@ public class SalesVelocityPlugin
         [Description("Days lookback window (default 7)")] int days = 7,
         CancellationToken cancellationToken = default)
     {
-        var since = DateTime.UtcNow.AddHours(7).AddDays(-Math.Max(1, days));
         var since = RetailRescueAI.Backend.Common.AppClock.Now.AddDays(-Math.Max(1, days));
         var recentItems = await _saleRepository.GetRecentSaleItemsAsync(since, cancellationToken);
         var productSoldUnits = recentItems.Where(si => si.ProductId == productId).Sum(si => si.Quantity);

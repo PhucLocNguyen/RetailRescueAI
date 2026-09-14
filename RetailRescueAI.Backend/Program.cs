@@ -168,7 +168,6 @@ app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/api/health", () => Results.Ok(new { status = "healthy", time = DateTime.UtcNow.AddHours(7) }));
 app.MapGet("/api/health", () => Results.Ok(new { status = "healthy", time = RetailRescueAI.Backend.Common.AppClock.Now }));
 app.MapControllers();
 
