@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using RetailRescueAI.Backend.DTOs;
 using RetailRescueAI.Backend.Models;
 using RetailRescueAI.Backend.Repositories.Interfaces;
@@ -40,12 +41,33 @@ public class OrchestratorAgent
 
     public async Task<(List<AIRecommendation> Recommendations, List<AiAgentTraceStepDto> Steps)> RunFullPipelineWithTraceAsync(CancellationToken cancellationToken = default)
     {
+        var steps = new List<AiAgentTraceStepDto>();
+        int createdCount = 0;
+
+        await foreach (var evt in RunFullPipelineStreamAsync(cancellationToken))
+        {
+            if (evt.Step != null)
+            {
+                steps.Add(evt.Step);
+            }
+            if (evt.CreatedCount.HasValue)
+            {
+                createdCount = evt.CreatedCount.Value;
+            }
+        }
+
+        var allPending = await _recommendationRepository.GetPendingRecommendationsAsync(cancellationToken);
+        var created = allPending.TakeLast(createdCount).ToList();
+        return (created, steps);
+    }
+
+    public async IAsyncEnumerable<AiPipelineStreamEvent> RunFullPipelineStreamAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
         _logger.LogInformation("=================================================");
-        _logger.LogInformation("[OrchestratorAgent] Starting AI Retail Rescue Analysis Pipeline...");
+        _logger.LogInformation("[OrchestratorAgent] Starting AI Retail Rescue Streaming Pipeline...");
         _logger.LogInformation("=================================================");
 
         var now = RetailRescueAI.Backend.Common.AppClock.Now;
-        var steps = new List<AiAgentTraceStepDto>();
 
         // 1. Fetch active inventory batches via Repository
         var batches = await _batchRepository.GetActiveBatchesAsync(cancellationToken);
@@ -53,7 +75,8 @@ public class OrchestratorAgent
         if (batches.Count == 0)
         {
             _logger.LogInformation("[OrchestratorAgent] No active batches found.");
-            return (new List<AIRecommendation>(), steps);
+            yield return new AiPipelineStreamEvent("complete", null, null, 5, 0, "有効な在庫ロットが存在しません。");
+            yield break;
         }
 
         // 2. Expiry Agent (Semantic Kernel)
@@ -82,7 +105,7 @@ public class OrchestratorAgent
             expiryDetails.Add($"{icon} {exp.Batch.BatchCode} ({exp.Batch.Product?.Name}): 残り{exp.HoursUntilExpiry:F1}時間 (リスク: {exp.RiskLevel})");
         }
 
-        steps.Add(new AiAgentTraceStepDto(
+        var step1 = new AiAgentTraceStepDto(
             AgentKey: "ExpiryAgent",
             AgentName: "賞味期限リスク監視エージェント (Semantic Kernel)",
             RoleTitle: "Expiry Risk Monitoring Agent (SK Plugin)",
@@ -90,7 +113,8 @@ public class OrchestratorAgent
             Details: expiryDetails,
             Status: "COMPLETED",
             DurationMs: (int)sw1.ElapsedMilliseconds
-        ));
+        );
+        yield return new AiPipelineStreamEvent("step", step1, 0, 5, null, null);
 
         // 3. Sales Analysis Agent (Semantic Kernel)
         var sw2 = System.Diagnostics.Stopwatch.StartNew();
@@ -103,7 +127,7 @@ public class OrchestratorAgent
             salesDetails.Add($"📊 {s.Batch.Product?.Name} ({s.Batch.BatchCode}): 日販 {s.AverageDailySales:F1}個/日 → 期限前消化予測 {s.EstimatedNormalSalesUntilExpiry}個 | 潜在廃棄 {s.PotentialWasteUnits}個 (損失見込 ¥{s.PotentialWasteFinancialLoss:N0})");
         }
 
-        steps.Add(new AiAgentTraceStepDto(
+        var step2 = new AiAgentTraceStepDto(
             AgentKey: "SalesAgent",
             AgentName: "販売速度・廃棄予測エージェント (Semantic Kernel)",
             RoleTitle: "Sales Velocity & Waste Forecaster (SK Plugin)",
@@ -111,7 +135,8 @@ public class OrchestratorAgent
             Details: salesDetails,
             Status: "COMPLETED",
             DurationMs: (int)sw2.ElapsedMilliseconds
-        ));
+        );
+        yield return new AiPipelineStreamEvent("step", step2, 1, 5, null, null);
 
         // 4. Promotion Agent (Semantic Kernel & Gemini)
         var sw3 = System.Diagnostics.Stopwatch.StartNew();
@@ -127,7 +152,7 @@ public class OrchestratorAgent
             promoDetails.Add($"💡 {p.ActionTitle}: 想定売上 {p.ExpectedSales}個 / 救済見込 +{p.ExpectedWasteReduction}個 / 回収収益 ¥{p.ExpectedRevenue:N0}");
         }
 
-        steps.Add(new AiAgentTraceStepDto(
+        var step3 = new AiAgentTraceStepDto(
             AgentKey: "PromotionAgent",
             AgentName: "販促プロモーション立案エージェント (Semantic Kernel)",
             RoleTitle: "Smart Promotion Strategy Agent (SK & Gemini)",
@@ -135,7 +160,8 @@ public class OrchestratorAgent
             Details: promoDetails,
             Status: "COMPLETED",
             DurationMs: (int)sw3.ElapsedMilliseconds
-        ));
+        );
+        yield return new AiPipelineStreamEvent("step", step3, 2, 5, null, null);
 
         // 5. Reviser Agent (Semantic Kernel Safety Guardrails)
         var sw4 = System.Diagnostics.Stopwatch.StartNew();
@@ -155,7 +181,7 @@ public class OrchestratorAgent
             }
         }
 
-        steps.Add(new AiAgentTraceStepDto(
+        var step4 = new AiAgentTraceStepDto(
             AgentKey: "ReviserAgent",
             AgentName: "安全制約検証エージェント (Semantic Kernel)",
             RoleTitle: "Retail Safety & Guardrails Agent (SK Plugin)",
@@ -163,7 +189,8 @@ public class OrchestratorAgent
             Details: reviserDetails,
             Status: "COMPLETED",
             DurationMs: (int)sw4.ElapsedMilliseconds
-        ));
+        );
+        yield return new AiPipelineStreamEvent("step", step4, 3, 5, null, null);
 
         // 6. Save valid proposals as PENDING recommendations
         var sw5 = System.Diagnostics.Stopwatch.StartNew();
@@ -236,7 +263,7 @@ public class OrchestratorAgent
             "店長ポータルで割引率の調整および承認が可能です。"
         };
 
-        steps.Add(new AiAgentTraceStepDto(
+        var step5 = new AiAgentTraceStepDto(
             AgentKey: "OrchestratorAgent",
             AgentName: "統括オーケストレーター",
             RoleTitle: "Human-in-the-Loop Orchestrator",
@@ -244,10 +271,18 @@ public class OrchestratorAgent
             Details: orchDetails,
             Status: "COMPLETED",
             DurationMs: (int)sw5.ElapsedMilliseconds
-        ));
+        );
+        yield return new AiPipelineStreamEvent("step", step5, 4, 5, null, null);
 
-        _logger.LogInformation("[OrchestratorAgent] Pipeline finished. Created {Count} PENDING recommendations.", createdRecommendations.Count);
-        return (createdRecommendations, steps);
+        // Final Complete Event
+        yield return new AiPipelineStreamEvent(
+            "complete",
+            null,
+            null,
+            5,
+            createdRecommendations.Count,
+            $"AI分析が正常に完了しました。{createdRecommendations.Count}件の提案を登録しました。"
+        );
     }
 }
 

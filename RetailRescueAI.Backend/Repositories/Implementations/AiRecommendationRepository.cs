@@ -22,6 +22,18 @@ public class AiRecommendationRepository : Repository<AIRecommendation>, IAiRecom
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<List<AIRecommendation>> GetPendingRecommendationsAsync(CancellationToken cancellationToken = default)
+    {
+        return await _dbSet
+            .Include(r => r.TargetProduct)
+            .Include(r => r.TargetBatch)
+            .Include(r => r.ComboProduct)
+            .Include(r => r.Evidences)
+            .Where(r => r.Status == "PENDING")
+            .OrderByDescending(r => r.CreatedAt)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<AIRecommendation?> GetWithDetailsAsync(int id, CancellationToken cancellationToken = default)
     {
         return await _dbSet

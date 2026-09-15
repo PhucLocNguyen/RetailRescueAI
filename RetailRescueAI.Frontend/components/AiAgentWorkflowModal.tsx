@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Sparkles,
   Clock,
@@ -16,7 +16,13 @@ import {
   AlertCircle,
   Zap,
 } from 'lucide-react';
-import { AiAgentTraceStep, triggerManualAiRun, AiPipelineRunResponse } from '@/lib/api';
+import {
+  AiAgentTraceStep,
+  triggerManualAiRun,
+  streamManualAiRun,
+  AiPipelineRunResponse,
+  AiPipelineStreamEvent,
+} from '@/lib/api';
 
 interface AiAgentWorkflowModalProps {
   isOpen: boolean;
@@ -65,44 +71,95 @@ const AGENT_CONFIGS: Record<string, { icon: any; color: string; bg: string; bord
 export default function AiAgentWorkflowModal({ isOpen, onClose, onComplete }: AiAgentWorkflowModalProps) {
   const [isRunning, setIsRunning] = useState(false);
   const [activeStepIndex, setActiveStepIndex] = useState<number>(0);
+  const [steps, setSteps] = useState<AiAgentTraceStep[]>([]);
   const [pipelineData, setPipelineData] = useState<AiPipelineRunResponse | null>(null);
   const [completedSteps, setCompletedSteps] = useState<number[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const cancelStreamRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       startPipelineRun();
     } else {
+      if (cancelStreamRef.current) {
+        cancelStreamRef.current();
+        cancelStreamRef.current = null;
+      }
       setPipelineData(null);
+      setSteps([]);
       setCompletedSteps([]);
       setActiveStepIndex(0);
+      setErrorMessage(null);
     }
+    return () => {
+      if (cancelStreamRef.current) {
+        cancelStreamRef.current();
+        cancelStreamRef.current = null;
+      }
+    };
   }, [isOpen]);
 
-  async function startPipelineRun() {
+  function startPipelineRun() {
+    if (cancelStreamRef.current) {
+      cancelStreamRef.current();
+      cancelStreamRef.current = null;
+    }
+
     setIsRunning(true);
+    setSteps([]);
     setCompletedSteps([]);
     setActiveStepIndex(0);
+    setPipelineData(null);
+    setErrorMessage(null);
 
-    try {
-      const response = await triggerManualAiRun();
-      setPipelineData(response);
+    const accumulatedSteps: AiAgentTraceStep[] = [];
 
-      // Animate through steps for demo visual experience
-      for (let i = 0; i < response.steps.length; i++) {
-        setActiveStepIndex(i);
-        await new Promise((r) => setTimeout(r, 650));
-        setCompletedSteps((prev) => [...prev, i]);
+    cancelStreamRef.current = streamManualAiRun(
+      (event: AiPipelineStreamEvent) => {
+        if (event.eventType === 'step' && event.step) {
+          accumulatedSteps.push(event.step);
+          const currentIdx = typeof event.stepIndex === 'number' ? event.stepIndex : accumulatedSteps.length - 1;
+          setSteps([...accumulatedSteps]);
+          setActiveStepIndex(currentIdx);
+          setCompletedSteps((prev) => Array.from(new Set([...prev, currentIdx])));
+        } else if (event.eventType === 'complete') {
+          setPipelineData({
+            success: true,
+            message: event.message || 'AI分析が完了しました。',
+            createdCount: event.createdCount ?? 0,
+            steps: accumulatedSteps,
+          });
+          setIsRunning(false);
+          cancelStreamRef.current = null;
+        } else if (event.eventType === 'error') {
+          setErrorMessage(event.message || 'AIパイプラインの実行中にエラーが発生しました。');
+          setIsRunning(false);
+          cancelStreamRef.current = null;
+        }
+      },
+      (err) => {
+        console.warn('SSE stream error, falling back to batch API...', err);
+        // Fallback gracefully to triggerManualAiRun if SSE fails or disconnects
+        triggerManualAiRun()
+          .then((res) => {
+            setPipelineData(res);
+            setSteps(res.steps);
+            setCompletedSteps(res.steps.map((_, i) => i));
+            setActiveStepIndex(res.steps.length - 1);
+          })
+          .catch((batchErr) => {
+            setErrorMessage(batchErr.message || 'AI分析の実行に失敗しました。');
+          })
+          .finally(() => {
+            setIsRunning(false);
+            cancelStreamRef.current = null;
+          });
       }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsRunning(false);
-    }
+    );
   }
 
   if (!isOpen) return null;
 
-  const steps = pipelineData?.steps || [];
   const currentStep = steps[activeStepIndex];
 
   return (
@@ -256,6 +313,22 @@ export default function AiAgentWorkflowModal({ isOpen, onClose, onComplete }: Ai
             <div className="py-16 text-center text-slate-500 text-sm">
               <Sparkles className="w-8 h-8 text-purple-500 mx-auto mb-2 animate-spin" />
               <span>AIエージェント分析パイプラインを初期化中...</span>
+            </div>
+          )}
+
+          {/* Error Banner */}
+          {errorMessage && (
+            <div className="bg-rose-950/40 border border-rose-500/40 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-rose-300">
+              <div className="flex items-center gap-2.5">
+                <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0" />
+                <span>{errorMessage}</span>
+              </div>
+              <button
+                onClick={startPipelineRun}
+                className="px-3.5 py-2 rounded-xl bg-rose-900/60 hover:bg-rose-800 text-rose-100 font-bold transition flex items-center gap-1.5"
+              >
+                <Play className="w-3.5 h-3.5" /> 再試行
+              </button>
             </div>
           )}
 

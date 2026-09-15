@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using RetailRescueAI.Backend.DTOs;
 using RetailRescueAI.Backend.Services.Interfaces;
@@ -19,31 +20,26 @@ public class AiRecommendationsController : ControllerBase
         _logger = logger;
     }
 
-    [HttpGet("recommendations")]
+    [HttpGet]
     public async Task<ActionResult<List<AIRecommendationDto>>> GetRecommendations(CancellationToken cancellationToken)
     {
-        var dtos = await _recommendationService.GetRecommendationsAsync(cancellationToken);
-        return Ok(dtos);
+        var recs = await _recommendationService.GetRecommendationsAsync(cancellationToken);
+        return Ok(recs);
     }
 
-    [HttpPost("recommendations/{id}/approve")]
+    [HttpPost("{id}/approve")]
     public async Task<ActionResult> ApproveRecommendation(
         int id,
         [FromBody] ApproveRecommendationRequest? request,
         CancellationToken cancellationToken)
     {
-        var (success, message, promotionId) = await _recommendationService.ApproveRecommendationAsync(id, request, cancellationToken);
-        if (!success) return NotFound(message);
+        var (success, message, promoId) = await _recommendationService.ApproveRecommendationAsync(id, request, cancellationToken);
+        if (!success) return BadRequest(new { success = false, message });
 
-        return Ok(new
-        {
-            success = true,
-            message,
-            promotionId
-        });
+        return Ok(new { success = true, message, promotionId = promoId });
     }
 
-    [HttpPost("recommendations/{id}/reject")]
+    [HttpPost("{id}/reject")]
     public async Task<ActionResult> RejectRecommendation(
         int id,
         [FromBody] RejectRecommendationRequest request,
@@ -70,5 +66,39 @@ public class AiRecommendationsController : ControllerBase
             return StatusCode(500, new { message = ex.Message });
         }
     }
-}
 
+    [HttpGet("run-stream")]
+    public async Task StreamManualAiAnalysis(CancellationToken cancellationToken)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.Append("Cache-Control", "no-cache");
+        Response.Headers.Append("Connection", "keep-alive");
+
+        var jsonOptions = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
+
+        try
+        {
+            _logger.LogInformation("Manager triggered streaming AI analysis pipeline.");
+            await foreach (var streamEvent in _recommendationService.StreamManualPipelineAsync(cancellationToken))
+            {
+                var json = JsonSerializer.Serialize(streamEvent, jsonOptions);
+                await Response.WriteAsync($"data: {json}\n\n", cancellationToken);
+                await Response.Body.FlushAsync(cancellationToken);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("AI pipeline streaming was canceled by client.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed during streaming AI analysis pipeline.");
+            var errJson = JsonSerializer.Serialize(new { eventType = "error", message = ex.Message }, jsonOptions);
+            await Response.WriteAsync($"data: {errJson}\n\n", cancellationToken);
+            await Response.Body.FlushAsync(cancellationToken);
+        }
+    }
+}

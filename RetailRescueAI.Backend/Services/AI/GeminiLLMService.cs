@@ -59,11 +59,7 @@ public class GeminiLLMService : ILLMService
         };
 
         var json = JsonSerializer.Serialize(requestPayload);
-        using var request = new HttpRequestMessage(HttpMethod.Post, url);
-        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
-        request.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
-
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        var response = await SendWithRetryAsync(url, json, apiKey!, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             var err = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -132,11 +128,7 @@ public class GeminiLLMService : ILLMService
         };
 
         var json = JsonSerializer.Serialize(requestPayload);
-        using var request = new HttpRequestMessage(HttpMethod.Post, url);
-        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
-        request.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
-
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        var response = await SendWithRetryAsync(url, json, apiKey!, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             var err = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -164,5 +156,34 @@ public class GeminiLLMService : ILLMService
         }
 
         return text;
+    }
+
+    private async Task<HttpResponseMessage> SendWithRetryAsync(string url, string jsonPayload, string apiKey, CancellationToken cancellationToken)
+    {
+        const int maxAttempts = 3;
+        HttpResponseMessage? response = null;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+            request.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
+
+            response = await _httpClient.SendAsync(request, cancellationToken);
+
+            // Check for 429 Too Many Requests or 503 Service Unavailable
+            if (((int)response.StatusCode == 429 || (int)response.StatusCode == 503) && attempt < maxAttempts)
+            {
+                int delayMs = attempt * 1500; // 1.5s, 3.0s
+                _logger.LogWarning("[GeminiLLMService] Rate limited or busy (HTTP {StatusCode}). Backing off for {DelayMs}ms (attempt {Attempt}/{Max})...",
+                    (int)response.StatusCode, delayMs, attempt, maxAttempts);
+                await Task.Delay(delayMs, cancellationToken);
+                continue;
+            }
+
+            return response;
+        }
+
+        return response!;
     }
 }

@@ -1,4 +1,6 @@
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.SemanticKernel;
 using RetailRescueAI.Backend.Models;
 using RetailRescueAI.Backend.Repositories.Interfaces;
@@ -72,12 +74,82 @@ public class PromotionAgent
             ));
         partnerDrink ??= allProducts.FirstOrDefault();
 
-        // Only propose for items with risk AT_RISK or CRITICAL and PotentialWasteUnits > 0
+        // Only propose for items with risk AT_RISK or CRITICAL and PotentialWasteUnits > 0 (Limit to top 3 for speed & rate limits)
         var candidateBatches = analysisResults
             .Where(r => (r.FinalEvaluatedRiskLevel == "CRITICAL" || r.FinalEvaluatedRiskLevel == "AT_RISK") && r.PotentialWasteUnits > 0)
             .OrderByDescending(r => r.PotentialWasteFinancialLoss)
+            .Take(5)
             .ToList();
 
+        // 1. Single Batch Gemini Call to generate reasoning for ALL candidates at once (Prevents HTTP 429 Rate Limit)
+        var aiReasons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (candidateBatches.Count > 0)
+        {
+            try
+            {
+                var sb = new StringBuilder();
+                sb.AppendLine("以下の対象商品リストについて、店長が納得できるプロモーションの根拠（日本語）を各商品1〜2文で論理的に作成してください:\n");
+
+                foreach (var c in candidateBatches)
+                {
+                    decimal disc = c.FinalEvaluatedRiskLevel == "CRITICAL" ? 30.0m : 20.0m;
+                    if (disc > (c.Batch.Product?.MaxDiscountPercent ?? 50m)) disc = c.Batch.Product!.MaxDiscountPercent;
+
+                    sb.AppendLine($"- ロット: {c.Batch.BatchCode}");
+                    sb.AppendLine($"  商品名: {c.Batch.Product?.Name}");
+                    sb.AppendLine($"  現在庫数: {c.Batch.RemainingQuantity}個 (賞味期限まで残り{c.HoursUntilExpiry:F1}時間)");
+                    sb.AppendLine($"  潜在廃棄リスク: {c.PotentialWasteUnits}個 (損失見込 ¥{c.PotentialWasteFinancialLoss:N0})");
+                    sb.AppendLine($"  提案割引率: {disc:F0}%\n");
+                }
+
+                sb.AppendLine(@"必ず以下のJSON配列フォーマットのみを出力してください（Markdownの ```json ... ``` で囲んでください）:
+```json
+[
+  {
+    ""batchCode"": ""ロットコード"",
+    ""reason"": ""店長向けの論理的な根拠（日本語）""
+  }
+]
+```");
+
+                var systemPrompt = "あなたは大手スーパーマーケット専属のAI小売最適化エージェント（RetailRescue AI）です。各対象商品の廃棄ロス削減に向けたプロモーション根拠を論理的かつ簡潔にまとめ、必ず指定のJSON配列形式で回答してください。";
+
+                var batchReply = await _llmService.GenerateTextAsync(systemPrompt, sb.ToString(), cancellationToken);
+
+                // Extract JSON array from LLM response
+                var jsonMatch = Regex.Match(batchReply, @"```(?:json)?\s*(\[[\s\S]*?\])\s*```", RegexOptions.IgnoreCase);
+                string jsonText = jsonMatch.Success ? jsonMatch.Groups[1].Value : batchReply.Trim();
+                if (!jsonText.StartsWith("["))
+                {
+                    var rawArrayMatch = Regex.Match(batchReply, @"(\[[\s\S]*\])");
+                    if (rawArrayMatch.Success) jsonText = rawArrayMatch.Groups[1].Value;
+                }
+
+                using var doc = JsonDocument.Parse(jsonText);
+                if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in doc.RootElement.EnumerateArray())
+                    {
+                        if (item.TryGetProperty("batchCode", out var bcEl) && item.TryGetProperty("reason", out var rEl))
+                        {
+                            var bc = bcEl.GetString();
+                            var r = rEl.GetString();
+                            if (!string.IsNullOrWhiteSpace(bc) && !string.IsNullOrWhiteSpace(r))
+                            {
+                                aiReasons[bc] = r;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[PromotionAgent] Single batch Gemini call failed or timed out. Falling back to structured rule-based reasoning.");
+            }
+        }
+
+        // 2. Build proposals using batch-generated reasons (No loop calling Gemini!)
         foreach (var candidate in candidateBatches)
         {
             var batch = candidate.Batch;
@@ -105,18 +177,11 @@ public class PromotionAgent
             var actionTitle = $"{product.Name} {discount:F0}% OFF（直前割）";
             var promoType = "DIRECT_DISCOUNT";
 
-            var prompt = $@"
-店舗商品: {product.Name} (コード: {product.ProductCode})
-現在庫数: {batch.RemainingQuantity}個 (賞味期限まで残り{candidate.HoursUntilExpiry:F1}時間)
-日販平均: {candidate.AverageDailySales}個/日
-通常予測販売数: {candidate.EstimatedNormalSalesUntilExpiry}個
-潜在的廃棄リスク: {candidate.PotentialWasteUnits}個
-提案割引率: {discount}%
-上記データに基づき、店長が納得できるプロモーションの根拠（日本語）を簡潔にまとめてください。";
+            string defaultReason = $"【AI廃棄ロス分析】「{product.Name}」は残り{candidate.HoursUntilExpiry:F1}時間で賞味期限を迎え、推定{candidate.PotentialWasteUnits}個（損失見込¥{candidate.PotentialWasteFinancialLoss:N0}）が廃棄となる恐れがあります。{discount:F0}%割引（直前割）を適用し、夕方のピーク需要を取り込んで早期売り切りを図ることを強く推奨します。";
 
-            var systemPrompt = "あなたは大手スーパーマーケット専属のAI小売最適化エージェント（RetailRescue AI）です。データに基づき、廃棄ロス防止のためのプロモーション根拠を論理的に解説してください。";
-
-            var aiReason = await _llmService.GenerateTextAsync(systemPrompt, prompt, cancellationToken);
+            string aiReason = aiReasons.TryGetValue(batch.BatchCode, out var generatedReason) && !string.IsNullOrWhiteSpace(generatedReason)
+                ? generatedReason
+                : defaultReason;
 
             var evidence = new Dictionary<string, string>
             {

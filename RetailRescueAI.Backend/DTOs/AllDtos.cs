@@ -326,4 +326,14 @@ public record AiPipelineRunResponse(
     List<AiAgentTraceStepDto> Steps
 );
 
+public record AiPipelineStreamEvent(
+    string EventType, // "step" | "complete" | "error"
+    AiAgentTraceStepDto? Step = null,
+    int? StepIndex = null,
+    int? TotalSteps = null,
+    int? CreatedCount = null,
+    string? Message = null
+);
+
+
 

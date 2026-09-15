@@ -187,5 +187,10 @@ public class AiRecommendationService : IAiRecommendationService
             Steps: steps
         );
     }
+
+    public IAsyncEnumerable<AiPipelineStreamEvent> StreamManualPipelineAsync(CancellationToken cancellationToken = default)
+    {
+        return _orchestratorAgent.RunFullPipelineStreamAsync(cancellationToken);
+    }
 }
 

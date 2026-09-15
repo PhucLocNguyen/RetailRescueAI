@@ -216,6 +216,16 @@ export interface AiPipelineRunResponse {
   steps: AiAgentTraceStep[];
 }
 
+export interface AiPipelineStreamEvent {
+  eventType: 'step' | 'complete' | 'error';
+  step?: AiAgentTraceStep;
+  stepIndex?: number;
+  totalSteps?: number;
+  createdCount?: number;
+  message?: string;
+  result?: AiPipelineRunResponse;
+}
+
 export async function approveAIRecommendation(
   id: number,
   customDiscountPercent?: number,
@@ -249,6 +259,35 @@ export async function triggerManualAiRun(): Promise<AiPipelineRunResponse> {
     throw new Error(errData.message || 'AI分析の実行に失敗しました。');
   }
   return res.json();
+}
+
+export function streamManualAiRun(
+  onEvent: (event: AiPipelineStreamEvent) => void,
+  onError: (error: any) => void
+): () => void {
+  const eventSource = new EventSource(`${API_BASE_URL}/ai/run-stream`);
+
+  eventSource.onmessage = (event) => {
+    try {
+      const data: AiPipelineStreamEvent = JSON.parse(event.data);
+      onEvent(data);
+      if (data.eventType === 'complete' || data.eventType === 'error') {
+        eventSource.close();
+      }
+    } catch (err) {
+      console.error('Failed to parse SSE event data:', err);
+    }
+  };
+
+  eventSource.onerror = (err) => {
+    console.error('SSE connection error:', err);
+    eventSource.close();
+    onError(err);
+  };
+
+  return () => {
+    eventSource.close();
+  };
 }
 
 export async function fetchPromotions(status?: string): Promise<Promotion[]> {
