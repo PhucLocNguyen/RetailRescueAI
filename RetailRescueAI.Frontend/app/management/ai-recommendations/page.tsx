@@ -423,7 +423,10 @@ export default function AiRecommendationsPage() {
       {/* AI Multi-Agent Workflow Visualizer Modal */}
       <AiAgentWorkflowModal
         isOpen={isAiModalOpen}
-        onClose={() => setIsAiModalOpen(false)}
+        onClose={() => {
+          setIsAiModalOpen(false);
+          loadRecommendations();
+        }}
         onComplete={loadRecommendations}
       />
     </div>

@@ -21,6 +21,7 @@ public class AiRecommendationsController : ControllerBase
     }
 
     [HttpGet]
+    [HttpGet("recommendations")]
     public async Task<ActionResult<List<AIRecommendationDto>>> GetRecommendations(CancellationToken cancellationToken)
     {
         var recs = await _recommendationService.GetRecommendationsAsync(cancellationToken);
@@ -28,6 +29,7 @@ public class AiRecommendationsController : ControllerBase
     }
 
     [HttpPost("{id}/approve")]
+    [HttpPost("recommendations/{id}/approve")]
     public async Task<ActionResult> ApproveRecommendation(
         int id,
         [FromBody] ApproveRecommendationRequest? request,
@@ -40,6 +42,7 @@ public class AiRecommendationsController : ControllerBase
     }
 
     [HttpPost("{id}/reject")]
+    [HttpPost("recommendations/{id}/reject")]
     public async Task<ActionResult> RejectRecommendation(
         int id,
         [FromBody] RejectRecommendationRequest request,
