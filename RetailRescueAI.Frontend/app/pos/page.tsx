@@ -529,10 +529,13 @@ export default function PosPage() {
   // Cart Calculations
   const subtotal = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
 
-  // Check active combo discounts from recommendations
+  // Check active combo discounts from recommendations (strictly for matching target batch)
   const activeComboDiscount = recommendations.reduce((acc, r) => {
     if (r.promotionType === 'BUNDLE_COMBO_APPLIED') {
-      return acc + (r.savingsAmount || 70);
+      const hasTargetBatch = !r.targetBatchId || cart.some((item) => item.batch.id === r.targetBatchId);
+      if (hasTargetBatch) {
+        return acc + (r.savingsAmount || 70);
+      }
     }
     return acc;
   }, 0);
@@ -941,6 +944,9 @@ export default function PosPage() {
                     const isComboApplied = promo.promotionType === 'BUNDLE_COMBO_APPLIED';
 
                     if (isComboApplied) {
+                      const hasTargetBatch = !promo.targetBatchId || cart.some((item) => item.batch.id === promo.targetBatchId);
+                      if (!hasTargetBatch) return null;
+
                       return (
                         <div
                           key={promo.promotionId}
